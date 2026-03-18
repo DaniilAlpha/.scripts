@@ -1,0 +1,19 @@
+#!/bin/bash
+
+mapfile -t SINKS < <(pactl list sinks short | cut -f2)
+CUR_SINK=$(pactl get-default-sink)
+
+for i in "${!SINKS[@]}"; do
+	if [[ "${SINKS[i]}" == "$CUR_SINK" ]]; then
+		next_i=$((i + 1))
+		if [[ $next_i -ge ${#SINKS[@]} ]]; then
+			next_i=0
+        fi
+
+		break
+	fi
+done
+
+NEXT_SINK="${SINKS[next_i]}"
+pactl set-default-sink $NEXT_SINK
+echo Switched to $NEXT_SINK
