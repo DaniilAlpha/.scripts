@@ -16,4 +16,5 @@ done
 
 NEXT_SINK="${SINKS[next_i]}"
 pactl set-default-sink $NEXT_SINK
-echo Switched to $NEXT_SINK
+
+echo "Switched to '${NEXT_SINK}'".
