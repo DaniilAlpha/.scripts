@@ -1,0 +1,5 @@
+#!/bin/bash
+NEXT_STATE=$(nmcli radio wifi | grep -q "enabled" && echo "off" || echo "on")
+nmcli radio wifi $NEXT_STATE
+
+echo "Wi-Fi turned $NEXT_STATE."
