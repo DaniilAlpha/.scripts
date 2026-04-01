@@ -1,3 +1,41 @@
 #!/usr/bin/lua
 
-local packet = require("socket.unix")
+print([[
+return {
+  cpu = {
+    load = 23.3,
+    temp = 36.6,
+  },
+  ram = "123M",
+  swap = "19K",
+}
+]])
+
+-- set SOCKS_DIR "/tmp/collecd/"
+-- set CPU_SOCK_NAME "cpu.sock"
+-- set RAM_SOCK_NAME "ram.sock"
+--
+-- set loadavg_fd [open "/proc/loadavg" "r"]
+--
+-- proc collect_cpu_load {} {
+--     global loadavg_fd
+--     seek $loadavg_fd 0
+--     set loadavg [lindex [gets $loadavg_fd] 0]
+--
+--     return [expr {$loadavg * 100}]
+-- }
+-- puts [collect_cpu_load]
+--
+--
+-- file mkdir $SOCKS_DIR
+-- file delete "$SOCKS_DIR/$CPU_SOCK_NAME"
+--
+-- #while true {
+-- while {![file exists "$SOCKS_DIR/$CPU_SOCK_NAME"]} {after 500}
+-- set sock [open "|nc -Uu $SOCKS_DIR/$CPU_SOCK_NAME" "w"]
+--
+-- while {1} {
+--     collect_cpu
+--     after 100
+-- }
+-- # #}
