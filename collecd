@@ -37,39 +37,83 @@ end
 --- collection ---
 ------------------
 
-local loadavg = io.open("/proc/loadavg", "r")
-local meminfo = io.open("/proc/meminfo", "r")
-local cpuinfo = io.open("/proc/cpuinfo", "r")
+--- one-time ---
 
---- @return number?
-local function collect_cpu_load_percent()
-	if not loadavg or not cpuinfo then
+--- @return integer?
+local function collect_cpu_core_count()
+	local cpuinfo = io.open("/proc/cpuinfo", "r")
+	if not cpuinfo then
 		return
 	end
 
-	local load = tonumber(reread(loadavg):match("[%d.]+"))
-	local core_count = tonumber(reread(cpuinfo):match("cpu cores%s+:%s+(%d+)"))
-	return load and tonumber(load) * 100 / core_count
+	local count = 0
+	for _ in cpuinfo:read("*a"):gmatch("processor%s+:%s+(%d+)") do
+		count = count + 1
+	end
+	return count
+end
+local cpu_core_count = collect_cpu_core_count()
+
+--- repeating ---
+
+local loadavg = io.open("/proc/loadavg", "r")
+--- @return number?
+local function collect_cpu_load_percent()
+	if not loadavg then
+		return
+	end
+
+	loadavg:seek("set")
+	local loadavg_str = loadavg:read("*a")
+
+	local load = tonumber(loadavg_str:match("[%d.]+"))
+	local load_percent = load and tonumber(load) * 100 / cpu_core_count
+
+	return load_percent
 end
 
+local meminfo = io.open("/proc/meminfo", "r")
 --- @return { [1]: number, [2]: SiPrefix }?, { [1]: number, [2]: SiPrefix }?
 local function collect_mem_swap()
 	if not meminfo then
 		return
 	end
 
-	local mem_total = tonumber(reread(meminfo):match("MemTotal:%s+(%d+)"))
-	local mem_free = tonumber(reread(meminfo):match("MemAvailable:%s+(%d+)"))
+	meminfo:seek("set")
+	local meminfo_str = meminfo:read("*a")
+
+	local mem_total = tonumber(meminfo_str:match("MemTotal:%s+(%d+)"))
+	local mem_free = tonumber(meminfo_str:match("MemAvailable:%s+(%d+)"))
+	local swap_total = tonumber(meminfo_str:match("SwapTotal:%s+(%d+)"))
+	local swap_free = tonumber(meminfo_str:match("SwapFree:%s+(%d+)"))
+
 	local mem_used = mem_total and mem_free and mem_total - mem_free
-	local swap_total = tonumber(reread(meminfo):match("SwapTotal:%s+(%d+)"))
-	local swap_free = tonumber(reread(meminfo):match("SwapFree:%s+(%d+)"))
 	local swap_used = swap_total and swap_free and swap_total - swap_free
 
-	local mem = mem_used and readable_si_size(mem_used, "k")
-	local swap = swap_used and readable_si_size(swap_used, "k")
-
-	return mem, swap
+	return mem_used and readable_si_size(mem_used, "k"), swap_used and readable_si_size(swap_used, "k")
 end
+
+--- @return { [1]: number, [2]: SiPrefix }?
+local function collect_rootfs()
+	local stat = io.popen("stat -f / -c 'available blocks: %a\nblock size: %S'")
+	if not stat then
+		return
+	end
+
+	--- @type string
+	local stat_str = stat:read("*a")
+
+	local rootfs_free_blocks = tonumber(stat_str:match("available blocks:%s+(%d+)"))
+	local rootfs_block_size = tonumber(stat_str:match("block size:%s+(%d+)"))
+
+	local rootfs_free = rootfs_free_blocks and rootfs_block_size and rootfs_free_blocks * rootfs_block_size
+
+	return rootfs_free and readable_si_size(rootfs_free)
+end
+
+-- TODO uptime
+-- TODO battery
+-- TODO thermal
 
 -----------------
 --- core loop ---
@@ -89,6 +133,12 @@ while true do
 		print("SWAP", string.format("%.2f%s", s, p))
 	end
 
-	print("---")
+	local rootfs = collect_rootfs()
+	if rootfs then
+		local s, p = table.unpack(rootfs)
+		print("ROOT FREE", string.format("%.2f%s", s, p))
+	end
+
+	print("------")
 	unistd.sleep(1)
 end
