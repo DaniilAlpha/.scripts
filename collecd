@@ -1,41 +1,94 @@
 #!/usr/bin/lua
 
-print([[
-return {
-  cpu = {
-    load = 23.3,
-    temp = 36.6,
-  },
-  ram = "123M",
-  swap = "19K",
-}
-]])
+local unistd = require("posix.unistd")
 
--- set SOCKS_DIR "/tmp/collecd/"
--- set CPU_SOCK_NAME "cpu.sock"
--- set RAM_SOCK_NAME "ram.sock"
---
--- set loadavg_fd [open "/proc/loadavg" "r"]
---
--- proc collect_cpu_load {} {
---     global loadavg_fd
---     seek $loadavg_fd 0
---     set loadavg [lindex [gets $loadavg_fd] 0]
---
---     return [expr {$loadavg * 100}]
--- }
--- puts [collect_cpu_load]
---
---
--- file mkdir $SOCKS_DIR
--- file delete "$SOCKS_DIR/$CPU_SOCK_NAME"
---
--- #while true {
--- while {![file exists "$SOCKS_DIR/$CPU_SOCK_NAME"]} {after 500}
--- set sock [open "|nc -Uu $SOCKS_DIR/$CPU_SOCK_NAME" "w"]
---
--- while {1} {
---     collect_cpu
---     after 100
--- }
--- # #}
+--- @param f file*
+--- @return string
+local function reread(f)
+	f:seek("set")
+	return f:read("*a")
+end
+
+--- @alias SiPrefix ""|"k"|"M"|"G"|"T"
+
+--- @param size number
+--- @param prefix SiPrefix?
+--- @return { [1]: number, [2]: string }
+local function readable_si_size(size, prefix)
+	local PREFIXES = { "", "k", "M", "G", "T" }
+
+	local prefix_i = 1
+	for i, p in ipairs(PREFIXES) do
+		if p == prefix then
+			prefix_i = i
+			break
+		end
+	end
+
+	while size > 1024 do
+		size = size / 1024
+		prefix_i = prefix_i + 1
+	end
+
+	return { size, PREFIXES[math.min(prefix_i, #PREFIXES)] }
+end
+
+------------------
+--- collection ---
+------------------
+
+local loadavg = io.open("/proc/loadavg", "r")
+local meminfo = io.open("/proc/meminfo", "r")
+local cpuinfo = io.open("/proc/cpuinfo", "r")
+
+--- @return number?
+local function collect_cpu_load_percent()
+	if not loadavg or not cpuinfo then
+		return
+	end
+
+	local load = tonumber(reread(loadavg):match("[%d.]+"))
+	local core_count = tonumber(reread(cpuinfo):match("cpu cores%s+:%s+(%d+)"))
+	return load and tonumber(load) * 100 / core_count
+end
+
+--- @return { [1]: number, [2]: SiPrefix }?, { [1]: number, [2]: SiPrefix }?
+local function collect_mem_swap()
+	if not meminfo then
+		return
+	end
+
+	local mem_total = tonumber(reread(meminfo):match("MemTotal:%s+(%d+)"))
+	local mem_free = tonumber(reread(meminfo):match("MemAvailable:%s+(%d+)"))
+	local mem_used = mem_total and mem_free and mem_total - mem_free
+	local swap_total = tonumber(reread(meminfo):match("SwapTotal:%s+(%d+)"))
+	local swap_free = tonumber(reread(meminfo):match("SwapFree:%s+(%d+)"))
+	local swap_used = swap_total and swap_free and swap_total - swap_free
+
+	local mem = mem_used and readable_si_size(mem_used, "k")
+	local swap = swap_used and readable_si_size(swap_used, "k")
+
+	return mem, swap
+end
+
+-----------------
+--- core loop ---
+-----------------
+
+while true do
+	local cpu_load = collect_cpu_load_percent()
+	print("CPU", string.format("%.1f%%", cpu_load))
+
+	local mem, swap = collect_mem_swap()
+	if mem then
+		local s, p = table.unpack(mem)
+		print("RAM", string.format("%.2f%s", s, p))
+	end
+	if swap then
+		local s, p = table.unpack(swap)
+		print("SWAP", string.format("%.2f%s", s, p))
+	end
+
+	print("---")
+	unistd.sleep(1)
+end
