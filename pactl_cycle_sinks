@@ -22,8 +22,7 @@ echo "Switched to '$NEXT_SINK'".
 
 NEXT_SINK_NAME=$(
     pactl list sinks | awk -v sink="$NEXT_SINK" '
-    /Sink #/ { found=0 }
-    $0 ~ "Name: " sink { found=1 }
-    found && /device.description/ { sub(/[^"]*"/, ""); sub(/".*/, ""); print $0 }'
+    $0 ~ sink { found=1 }
+    found && /device.description/ { sub(/[^"]*"/, ""); sub(/".*/, ""); print; exit }'
 )
-notify-send "Audio Output Changed" "$NEXT_SINK_NAME" -i audio-speakers-symbolic
+notify-send "$NEXT_SINK_NAME" -i audio-speakers-symbolic
