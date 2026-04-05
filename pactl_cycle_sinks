@@ -25,4 +25,4 @@ NEXT_SINK_NAME=$(
     $0 ~ sink { found=1 }
     found && /device.description/ { sub(/[^"]*"/, ""); sub(/".*/, ""); print; exit }'
 )
-notify-send "$NEXT_SINK_NAME" -i audio-speakers-symbolic -u low -t 1000
+notify-send "$NEXT_SINK_NAME" -i audio-speakers-symbolic -u low 
