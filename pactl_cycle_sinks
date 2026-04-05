@@ -20,8 +20,10 @@ pactl set-default-sink $NEXT_SINK
 echo "Switched to '$NEXT_SINK'".
 
 
-NEXT_SINK_NAME=$(pactl list sinks | awk -v sink="$NEXT_SINK" '
+NEXT_SINK_NAME=$(
+    pactl list sinks | awk -v sink="$NEXT_SINK" '
     /Sink #/ { found=0 }
     $0 ~ "Name: " sink { found=1 }
-    found && match($0, /device.description.*"(.+)"/, arr) { print arr[1] }')
+    found && /device.description/ { sub(/[^"]*"/, ""); sub(/".*/, ""); print $0 }'
+)
 notify-send "Audio Output Changed" "$NEXT_SINK_NAME" -i audio-speakers-symbolic
