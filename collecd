@@ -1,14 +1,8 @@
 #!/usr/bin/lua
 
 local unistd = require("posix.unistd")
+local lfs = require("lfs")
 table.unpack = table.unpack or unpack
-
---- @param f file*
---- @return string
-local function reread(f)
-	f:seek("set")
-	return f:read("*a")
-end
 
 --- @alias SiPrefix ""|"k"|"M"|"G"|"T"
 
@@ -51,42 +45,44 @@ local function collect_cpu_core_count()
 	for _ in cpuinfo:read("*a"):gmatch("processor%s+:%s+(%d+)") do
 		count = count + 1
 	end
+
 	return count
 end
-local cpu_core_count = collect_cpu_core_count()
 
 --- repeating ---
 
-local loadavg = io.open("/proc/loadavg", "r")
+--- @param core_count number?
 --- @return number?
-local function collect_cpu_load_percent()
-	if not loadavg then
+local function collect_cpu_load_percent(core_count)
+	local loadavg_file = io.open("/proc/loadavg", "r")
+	if not loadavg_file then
 		return
 	end
 
-	loadavg:seek("set")
-	local loadavg_str = loadavg:read("*a")
+	core_count = core_count or 1
 
-	local load = tonumber(loadavg_str:match("[%d.]+"))
-	local load_percent = load and tonumber(load) * 100 / cpu_core_count
+	--- @type number?
+	local load = loadavg_file:read("*n")
+
+	local load_percent = load and load / core_count * 100
 
 	return load_percent
 end
 
-local meminfo = io.open("/proc/meminfo", "r")
 --- @return { [1]: number, [2]: SiPrefix }?, { [1]: number, [2]: SiPrefix }?
 local function collect_mem_swap()
-	if not meminfo then
+	local meminfo_file = io.open("/proc/meminfo", "r")
+	if not meminfo_file then
 		return
 	end
 
-	meminfo:seek("set")
-	local meminfo_str = meminfo:read("*a")
+	--- @type string
+	local meminfo = meminfo_file:read("*a")
 
-	local mem_total = tonumber(meminfo_str:match("MemTotal:%s+(%d+)"))
-	local mem_free = tonumber(meminfo_str:match("MemAvailable:%s+(%d+)"))
-	local swap_total = tonumber(meminfo_str:match("SwapTotal:%s+(%d+)"))
-	local swap_free = tonumber(meminfo_str:match("SwapFree:%s+(%d+)"))
+	local mem_total = tonumber(meminfo:match("MemTotal:%s+(%d+)"))
+	local mem_free = tonumber(meminfo:match("MemAvailable:%s+(%d+)"))
+	local swap_total = tonumber(meminfo:match("SwapTotal:%s+(%d+)"))
+	local swap_free = tonumber(meminfo:match("SwapFree:%s+(%d+)"))
 
 	local mem_used = mem_total and mem_free and mem_total - mem_free
 	local swap_used = swap_total and swap_free and swap_total - swap_free
@@ -96,33 +92,68 @@ end
 
 --- @return { [1]: number, [2]: SiPrefix }?
 local function collect_rootfs()
-	local stat = io.popen("stat -f / -c 'available blocks: %a\nblock size: %S'")
+	local stat = io.popen("stat -f / -c '%a %S'")
 	if not stat then
 		return
 	end
 
-	--- @type string
-	local stat_str = stat:read("*a")
-
-	local rootfs_free_blocks = tonumber(stat_str:match("available blocks:%s+(%d+)"))
-	local rootfs_block_size = tonumber(stat_str:match("block size:%s+(%d+)"))
+	--- @type number?
+	local rootfs_free_blocks = stat:read("*n")
+	--- @type number?
+	local rootfs_block_size = stat:read("*n")
 
 	local rootfs_free = rootfs_free_blocks and rootfs_block_size and rootfs_free_blocks * rootfs_block_size
 
 	return rootfs_free and readable_si_size(rootfs_free)
 end
 
+--- @return table
+local function collect_thermal()
+	local thermal = {}
+
+	for filename in lfs.dir("/sys/class/thermal/") do
+		--- @cast filename string
+
+		local zone_i = tonumber(filename:match("thermal_zone([0-9]+)"))
+		if not zone_i then
+			goto continue
+		end
+
+		local temp_file = io.open("/sys/class/thermal/" .. filename .. "/temp")
+		local type_file = io.open("/sys/class/thermal/" .. filename .. "/type")
+		if not temp_file or not type_file then
+			goto continue
+		end
+
+		--- @type string?
+		local name = type_file:read("*l")
+		--- @type number?
+		local value = temp_file:read("*n")
+
+		thermal[zone_i + 1] = { name = name, value = value and value / 1000 }
+
+		::continue::
+	end
+
+	return thermal
+end
+
+-- TODO extend with thresholds and status
 -- TODO uptime
 -- TODO battery
--- TODO thermal
+-- TODO explore some advanced IO stats with /proc/diskstats
 
 -----------------
 --- core loop ---
 -----------------
 
+local cpu_core_count = collect_cpu_core_count()
+
 while true do
-	local cpu_load = collect_cpu_load_percent()
-	print("CPU", string.format("%.1f%%", cpu_load))
+	local cpu_load = collect_cpu_load_percent(cpu_core_count)
+	if cpu_load then
+		print("CPU", string.format("%.1f%%", cpu_load))
+	end
 
 	local mem, swap = collect_mem_swap()
 	if mem then
@@ -138,6 +169,13 @@ while true do
 	if rootfs then
 		local s, p = table.unpack(rootfs)
 		print("ROOT FREE", string.format("%.2f%s", s, p))
+	end
+
+	local thermal = collect_thermal()
+	if thermal then
+		for i, v in ipairs(thermal) do
+			print("THERMAL " .. i, string.format("%s - %.2f oC", v.name, v.value))
+		end
 	end
 
 	print("------")
