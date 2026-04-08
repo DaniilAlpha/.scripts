@@ -123,7 +123,7 @@ local function collect_rootfs()
 end
 
 --- @return {[integer]: {value: number, risk: number, label: string}}
-local function collect_thermal()
+local function collect_temps()
 	---@param zone_i number
 	---@return {value: number, risk: number, label: string}?
 	local function collect_thermal_zone(zone_i)
@@ -195,10 +195,11 @@ local function collect_thermal()
 	return thermal
 end
 
--- TODO network traffic and health via /proc/net/dev /proc/net/wireless and
 -- TODO battery and power consumption
+-- TODO extend temps with /sys/class/power_supply/ temps (filtered by device symlink)
+-- TODO probably expose cooling devices
+-- TODO network traffic and health via /proc/net/dev /proc/net/wireless and
 -- TODO explore some advanced IO stats with /proc/diskstats
--- TODO could also monitor /proc/mounts, detecting if anything went readonly
 
 -----------------
 --- core loop ---
@@ -225,9 +226,9 @@ while true do
 		print("ROOT FREE", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
 	end
 
-	local thermal = collect_thermal()
-	for i, t in pairs(thermal) do
-		print("THERMAL " .. i, string.format("%.2f oC (%.2f risk) | %s", t.value, t.risk, t.label))
+	local temps = collect_temps()
+	for i, t in pairs(temps) do
+		print("TEMP" .. i, string.format("%.2f oC (%.2f risk) | %s", t.value, t.risk, t.label))
 	end
 
 	print("------")
