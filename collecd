@@ -4,6 +4,22 @@ local unistd = require("posix.unistd")
 local lfs = require("lfs")
 table.unpack = table.unpack or unpack
 
+--- @param path string
+--- @param whats ("*a"|"*l"|"*n")[]
+--- @return (any)...
+local function read(path, whats)
+	local file = path:sub(1, 1) == "|" and io.popen(path:sub(2), "r") or io.open(path, "r")
+	if not file then
+		return
+	end
+	local result = {}
+	for i, what in ipairs(whats) do
+		result[i] = file:read(what)
+	end
+	file:close()
+	return table.unpack(result)
+end
+
 --- @alias SiPrefix ""|"k"|"M"|"G"|"T"
 
 --- @param size number
@@ -36,48 +52,42 @@ end
 
 --- @return integer?
 local function collect_cpu_core_count()
-	local cpuinfo = io.open("/proc/cpuinfo", "r")
+	local cpuinfo = read("/proc/cpuinfo", { "*a" })
 	if not cpuinfo then
 		return
 	end
 
 	local count = 0
-	for _ in cpuinfo:read("*a"):gmatch("processor%s+:%s+(%d+)") do
+	for _ in cpuinfo:gmatch("processor%s+:%s+(%d+)") do
 		count = count + 1
 	end
-
 	return count
 end
 
 --- repeating ---
 
 --- @param core_count number?
---- @return number?
-local function collect_cpu_load_percent(core_count)
-	local loadavg_file = io.open("/proc/loadavg", "r")
-	if not loadavg_file then
-		return
-	end
-
+--- @return {value: number, risk: number}?
+local function collect_cpu_load(core_count)
 	core_count = core_count or 1
 
 	--- @type number?
-	local load = loadavg_file:read("*n")
-
-	local load_percent = load and load / core_count * 100
-
-	return load_percent
-end
-
---- @return { [1]: number, [2]: SiPrefix }?, { [1]: number, [2]: SiPrefix }?
-local function collect_mem_swap()
-	local meminfo_file = io.open("/proc/meminfo", "r")
-	if not meminfo_file then
+	local loadavg = read("/proc/loadavg", { "*n" })
+	if not loadavg then
 		return
 	end
 
-	--- @type string
-	local meminfo = meminfo_file:read("*a")
+	local load_relative = loadavg / core_count
+	return { value = load_relative * 100, risk = load_relative }
+end
+
+--- @return {value: { [1]: number, [2]: SiPrefix }, risk: number}?, {value: { [1]: number, [2]: SiPrefix }, risk: number}?
+local function collect_mem_swap()
+	--- @type string?
+	local meminfo = read("/proc/meminfo", { "*a" })
+	if not meminfo then
+		return
+	end
 
 	local mem_total = tonumber(meminfo:match("MemTotal:%s+(%d+)"))
 	local mem_free = tonumber(meminfo:match("MemAvailable:%s+(%d+)"))
@@ -87,50 +97,91 @@ local function collect_mem_swap()
 	local mem_used = mem_total and mem_free and mem_total - mem_free
 	local swap_used = swap_total and swap_free and swap_total - swap_free
 
-	return mem_used and readable_si_size(mem_used, "k"), swap_used and readable_si_size(swap_used, "k")
+	return {
+		value = mem_used and readable_si_size(mem_used, "k"),
+		risk = mem_used / mem_total,
+	}, {
+		value = swap_used and readable_si_size(swap_used, "k"),
+		risk = swap_used / swap_total,
+	}
 end
 
---- @return { [1]: number, [2]: SiPrefix }?
+--- @return {value: { [1]: number, [2]: SiPrefix }, risk: number}?
 local function collect_rootfs()
-	local stat = io.popen("stat -f / -c '%a %S'")
-	if not stat then
+	--- @type number?, number?, number?
+	local rootfs_total_blocks, rootfs_free_blocks, rootfs_block_size =
+		read("|stat -f / -c '%b %a %S'", { "*n", "*n", "*n" })
+	if not rootfs_total_blocks or not rootfs_free_blocks or not rootfs_block_size then
 		return
 	end
 
-	--- @type number?
-	local rootfs_free_blocks = stat:read("*n")
-	--- @type number?
-	local rootfs_block_size = stat:read("*n")
-
-	local rootfs_free = rootfs_free_blocks and rootfs_block_size and rootfs_free_blocks * rootfs_block_size
-
-	return rootfs_free and readable_si_size(rootfs_free)
+	local rootfs_free = rootfs_free_blocks * rootfs_block_size
+	return {
+		value = readable_si_size(rootfs_free),
+		risk = (rootfs_total_blocks - rootfs_free_blocks) / rootfs_total_blocks,
+	}
 end
 
---- @return table
+--- @return {[integer]: {value: number, risk: number, label: string}}
 local function collect_thermal()
 	local thermal = {}
 
-	for filename in lfs.dir("/sys/class/thermal/") do
-		--- @cast filename string
+	for zone_filename in lfs.dir("/sys/class/thermal/") do
+		--- @cast zone_filename string
 
-		local zone_i = tonumber(filename:match("thermal_zone([0-9]+)"))
+		local zone_i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
 		if not zone_i then
 			goto continue
 		end
 
-		local temp_file = io.open("/sys/class/thermal/" .. filename .. "/temp")
-		local type_file = io.open("/sys/class/thermal/" .. filename .. "/type")
-		if not temp_file or not type_file then
+		--- @type number?, number?, number?
+		local hot_thld, critical_thld, active_thld
+		for trip_point_filename in lfs.dir("/sys/class/thermal/" .. zone_filename) do
+			--- @cast trip_point_filename string
+
+			local trip_point_i = tonumber(trip_point_filename:match("trip_point_([0-9]+)_type"))
+			if not trip_point_i then
+				goto continue
+			end
+
+			--- @type string?, number?
+			local tp_type, tp_temp =
+				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. trip_point_i .. "_type", { "*l" }),
+				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. trip_point_i .. "_temp", { "*n" })
+			if not tp_type or not tp_temp then
+				goto continue
+			end
+
+			-- sanity check for invalid temps
+			if tp_temp <= 0 then
+				goto continue
+			end
+
+			if tp_type == "hot" then
+				hot_thld = tp_temp
+			elseif tp_type == "critical" then
+				critical_thld = tp_temp
+			elseif tp_type == "active" then
+				active_thld = tp_temp
+			end
+
+			::continue::
+		end
+		local thld = critical_thld or hot_thld or active_thld or 0 -- TODO! fix last fallback
+
+		--- @type string?, number?
+		local label, temp =
+			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/type", { "*l" }),
+			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/temp", { "*n" })
+		if not temp then
 			goto continue
 		end
 
-		--- @type string?
-		local name = type_file:read("*l")
-		--- @type number?
-		local value = temp_file:read("*n")
-
-		thermal[zone_i + 1] = { name = name, value = value and value / 1000 }
+		thermal[zone_i] = {
+			value = temp / 1000,
+			risk = temp / thld,
+			label = label,
+		}
 
 		::continue::
 	end
@@ -138,7 +189,6 @@ local function collect_thermal()
 	return thermal
 end
 
--- TODO extend with thresholds and status
 -- TODO uptime
 -- TODO battery
 -- TODO explore some advanced IO stats with /proc/diskstats
@@ -150,32 +200,27 @@ end
 local cpu_core_count = collect_cpu_core_count()
 
 while true do
-	local cpu_load = collect_cpu_load_percent(cpu_core_count)
+	local cpu_load = collect_cpu_load(cpu_core_count)
 	if cpu_load then
-		print("CPU", string.format("%.1f%%", cpu_load))
+		print("CPU", string.format("%.1f%% (%.2f risk)", cpu_load.value, cpu_load.risk))
 	end
 
 	local mem, swap = collect_mem_swap()
 	if mem then
-		local s, p = table.unpack(mem)
-		print("RAM", string.format("%.2f%s", s, p))
+		print("RAM", string.format("%.2f%s (%.2f risk)", mem.value[1], mem.value[2], mem.risk))
 	end
 	if swap then
-		local s, p = table.unpack(swap)
-		print("SWAP", string.format("%.2f%s", s, p))
+		print("SWAP", string.format("%.2f%s (%.2f risk)", swap.value[1], swap.value[2], swap.risk))
 	end
 
 	local rootfs = collect_rootfs()
 	if rootfs then
-		local s, p = table.unpack(rootfs)
-		print("ROOT FREE", string.format("%.2f%s", s, p))
+		print("ROOT FREE", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
 	end
 
 	local thermal = collect_thermal()
-	if thermal then
-		for i, v in ipairs(thermal) do
-			print("THERMAL " .. i, string.format("%s - %.2f oC", v.name, v.value))
-		end
+	for i, t in pairs(thermal) do
+		print("THERMAL " .. i, string.format("%.2f oC (%.2f risk) | %s", t.value, t.risk, t.label))
 	end
 
 	print("------")
