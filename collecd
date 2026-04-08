@@ -127,7 +127,7 @@ local function collect_thermal()
 	---@param zone_i number
 	---@return {value: number, risk: number, label: string}?
 	local function collect_thermal_zone(zone_i)
-		local FALLBACK_THLD = 90000
+		local FALLBACK_THLD = 100000
 
 		---@param tp_i number
 		---@return {type: string, value: number}?
