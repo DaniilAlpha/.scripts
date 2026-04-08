@@ -1,4 +1,4 @@
-#!/usr/bin/lua
+#!/usr/bin/lua5.1
 
 local posix = require("posix")
 local lfs = require("lfs")
@@ -124,74 +124,81 @@ end
 
 --- @return {[integer]: {value: number, risk: number, label: string}}
 local function collect_thermal()
-	local thermal = {}
+	---@param zone_i number
+	---@return {value: number, risk: number, label: string}?
+	local function collect_thermal_zone(zone_i)
+		local FALLBACK_THLD = 90
 
-	for zone_filename in lfs.dir("/sys/class/thermal/") do
-		--- @cast zone_filename string
+		---@param tp_i number
+		---@return {type: string, value: number}?
+		local function collect_tp(tp_i)
+			--- @type string?, number?
+			local type, temp =
+				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. tp_i .. "_type", { "*l" }),
+				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. tp_i .. "_temp", { "*n" })
+			if not type or not temp then
+				return
+			end
 
-		local zone_i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
-		if not zone_i then
-			goto continue
+			-- sanity check for invalid temps
+			if temp <= 0 then
+				return
+			end
+			return { type = type, value = temp }
 		end
 
 		--- @type number?, number?, number?
 		local hot_thld, critical_thld, active_thld
-		for trip_point_filename in lfs.dir("/sys/class/thermal/" .. zone_filename) do
-			--- @cast trip_point_filename string
+		for tp_filename in lfs.dir("/sys/class/thermal/thermal_zone" .. zone_i) do
+			--- @cast tp_filename string
 
-			local trip_point_i = tonumber(trip_point_filename:match("trip_point_([0-9]+)_type"))
-			if not trip_point_i then
-				goto continue
+			local tp_i = tonumber(tp_filename:match("trip_point_([0-9]+)_type"))
+			local tp = tp_i and collect_tp(tp_i)
+			if tp then
+				if tp.type == "hot" then
+					hot_thld = tp.value
+				elseif tp.type == "critical" then
+					critical_thld = tp.value
+				elseif tp.type == "active" then
+					active_thld = tp.value
+				end
 			end
-
-			--- @type string?, number?
-			local tp_type, tp_temp =
-				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. trip_point_i .. "_type", { "*l" }),
-				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. trip_point_i .. "_temp", { "*n" })
-			if not tp_type or not tp_temp then
-				goto continue
-			end
-
-			-- sanity check for invalid temps
-			if tp_temp <= 0 then
-				goto continue
-			end
-
-			if tp_type == "hot" then
-				hot_thld = tp_temp
-			elseif tp_type == "critical" then
-				critical_thld = tp_temp
-			elseif tp_type == "active" then
-				active_thld = tp_temp
-			end
-
-			::continue::
 		end
-		local thld = critical_thld or hot_thld or active_thld or 0 -- TODO! fix last fallback
+		local thld = critical_thld or hot_thld or active_thld or FALLBACK_THLD
 
 		--- @type string?, number?
 		local label, temp =
 			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/type", { "*l" }),
 			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/temp", { "*n" })
 		if not temp then
-			goto continue
+			return
 		end
 
-		thermal[zone_i] = {
+		return {
 			value = temp / 1000,
 			risk = temp / thld,
 			label = label,
 		}
+	end
 
-		::continue::
+	local thermal = {}
+
+	for zone_filename in lfs.dir("/sys/class/thermal/") do
+		--- @cast zone_filename string
+
+		local zone_i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
+		if zone_i then
+			thermal[zone_i] = collect_thermal_zone(zone_i)
+		end
 	end
 
 	return thermal
 end
 
--- TODO uptime
--- TODO battery
+-- TODO network traffic and health via /proc/net/dev /proc/net/wireless and
+-- TODO battery and power consumption
 -- TODO explore some advanced IO stats with /proc/diskstats
+-- TODO could also monitor /proc/mounts, detecting if anything went readonly
 
 -----------------
 --- core loop ---
