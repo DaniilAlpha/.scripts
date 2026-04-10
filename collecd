@@ -1,4 +1,4 @@
-#!/usr/bin/lua5.1
+#!/usr/bin/lua
 
 local posix = require("posix")
 local lfs = require("lfs")
@@ -181,18 +181,62 @@ local function collect_temps()
 		}
 	end
 
-	local thermal = {}
-
+	local temps = {}
 	for zone_filename in lfs.dir("/sys/class/thermal/") do
 		--- @cast zone_filename string
 
-		local zone_i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
-		if zone_i then
-			thermal[zone_i] = collect_thermal_zone(zone_i)
+		local i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
+		if i then
+			temps[i] = collect_thermal_zone(i)
 		end
 	end
+	return temps
+end
 
-	return thermal
+--- @type {time: integer, last_cap: number, trends: number[]}[]
+local bat_histories = {}
+--- @return {value: number, risk: number, trend: number|nil}[]
+local function collect_bats()
+	local TREND_COUNT_MIN = 3
+	local TREND_COUNT_MAX = 10
+
+	---@param bat_i number
+	---@return {type: string, value: number}?
+	local function collect_bat(bat_i)
+		--- @type number?
+		local cap = read("/sys/class/power_supply/BAT" .. bat_i .. "/capacity", { "*n" })
+		if not cap then
+			return
+		end
+
+		local history = bat_histories[bat_i] or { time = 0, last_cap = cap, trends = {} }
+		local last_trend = (cap - history.last_cap) / (os.time() - history.time)
+		history.time = os.time()
+		history.last_cap = cap
+		history.trends[#history.trends + 1] = last_trend
+		while #history.trends > TREND_COUNT_MAX do
+			table.remove(history.trends, 1)
+		end
+		bat_histories[bat_i] = history
+
+		local trend = 0
+		for _, v in ipairs(history.trends) do
+			trend = trend + v / #history.trends -- TODO not tested
+		end
+
+		return { value = cap, risk = 1 - cap / 100, trend = #history.trends >= TREND_COUNT_MIN and trend }
+	end
+
+	local bats = {}
+	for bat_filename in lfs.dir("/sys/class/power_supply/") do
+		--- @cast bat_filename string
+
+		local i = tonumber(bat_filename:match("BAT([0-9]+)"))
+		if i then
+			bats[i] = collect_bat(i)
+		end
+	end
+	return bats
 end
 
 -- TODO battery and power consumption
@@ -207,30 +251,67 @@ end
 
 local cpu_core_count = collect_cpu_core_count()
 
+local CPU_LOAD_PERIOD = 5
+local RAM_SWAP_PERIOD = 5
+local ROOTFS_PERIOD = 60
+local TEMPS_PERIOD = 60
+local BATS_PERIOD = 60
+
+local cpu_load_time = 0
+local ram_swap_time = 0
+local rootfs_time = 0
+local temps_time = 0
+local bats_time = 0
 while true do
-	local cpu_load = collect_cpu_load(cpu_core_count)
-	if cpu_load then
-		print("CPU", string.format("%.1f%% (%.2f risk)", cpu_load.value, cpu_load.risk))
+	local time = os.time()
+
+	if time - cpu_load_time >= CPU_LOAD_PERIOD then
+		cpu_load_time = time
+
+		local cpu_load = collect_cpu_load(cpu_core_count)
+		if cpu_load then
+			print("CPU", string.format("%.1f%% (%.2f risk)", cpu_load.value, cpu_load.risk))
+		end
 	end
 
-	local mem, swap = collect_mem_swap()
-	if mem then
-		print("RAM", string.format("%.2f%s (%.2f risk)", mem.value[1], mem.value[2], mem.risk))
-	end
-	if swap then
-		print("SWAP", string.format("%.2f%s (%.2f risk)", swap.value[1], swap.value[2], swap.risk))
+	if time - ram_swap_time >= RAM_SWAP_PERIOD then
+		ram_swap_time = time
+
+		local mem, swap = collect_mem_swap()
+		if mem then
+			print("RAM", string.format("%.2f%s (%.2f risk)", mem.value[1], mem.value[2], mem.risk))
+		end
+		if swap then
+			print("SWAP", string.format("%.2f%s (%.2f risk)", swap.value[1], swap.value[2], swap.risk))
+		end
 	end
 
-	local rootfs = collect_rootfs()
-	if rootfs then
-		print("ROOT FREE", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
+	if time - rootfs_time >= ROOTFS_PERIOD then
+		rootfs_time = time
+
+		local rootfs = collect_rootfs()
+		if rootfs then
+			print("ROOT FREE", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
+		end
 	end
 
-	local temps = collect_temps()
-	for i, t in pairs(temps) do
-		print("TEMP" .. i, string.format("%.2f oC (%.2f risk) | %s", t.value, t.risk, t.label))
+	if time - temps_time >= TEMPS_PERIOD then
+		temps_time = time
+
+		local temps = collect_temps()
+		for i, t in pairs(temps) do
+			print("TEMP" .. i, string.format("%.2f oC (%.2f risk) | %s", t.value, t.risk, t.label))
+		end
 	end
 
-	print("------")
-	posix.time.nanosleep({ tv_nsec = 999999999 })
+	if time - bats_time >= BATS_PERIOD then
+		bats_time = time
+
+		local bats = collect_bats()
+		for i, t in pairs(bats) do
+			print("BAT" .. i, string.format("%.0f%% %+.2f%%/s (%.2f risk)", t.value, t.trend or (0 / 0), t.risk))
+		end
+	end
+
+	posix.sleep(1)
 end
