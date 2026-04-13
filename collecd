@@ -82,7 +82,7 @@ local function collect_cpu_load(core_count)
 end
 
 --- @return {value: { [1]: number, [2]: SiPrefix }, risk: number}?, {value: { [1]: number, [2]: SiPrefix }, risk: number}?
-local function collect_mem_swap()
+local function collect_mem_and_swap()
 	--- @type string?
 	local meminfo = read("/proc/meminfo", { "*a" })
 	if not meminfo then
@@ -128,6 +128,7 @@ local function collect_temps()
 	---@return {value: number, risk: number, label: string}?
 	local function collect_thermal_zone(zone_i)
 		local FALLBACK_THLD = 100000
+		local BEST_TEMP = 20000
 
 		---@param tp_i number
 		---@return {type: string, value: number}?
@@ -167,7 +168,7 @@ local function collect_temps()
 		local thld = critical_thld or hot_thld or active_thld or FALLBACK_THLD
 
 		--- @type string?, number?
-		local label, temp =
+		local type, temp =
 			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/type", { "*l" }),
 			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/temp", { "*n" })
 		if not temp then
@@ -176,8 +177,28 @@ local function collect_temps()
 
 		return {
 			value = temp / 1000,
-			risk = temp / thld,
-			label = label,
+			risk = math.abs(temp - BEST_TEMP) / thld,
+			label = type,
+		}
+	end
+
+	local function collect_bat_temps(bat_i)
+		local FALLBACK_THLD = 50000
+		local BEST_TEMP = 20000
+
+		--- @type number?, number?
+		local type, temp, temp_max =
+			read("/sys/class/power_supply/BAT" .. bat_i .. "/type", { "*l" }),
+			read("/sys/class/power_supply/BAT" .. bat_i .. "/temp", { "*n" }),
+			read("/sys/class/power_supply/BAT" .. bat_i .. "/temp_max", { "*n" })
+		if not temp or not temp_max then
+			return
+		end
+
+		return {
+			value = temp / 1000,
+			risk = math.abs(temp - BEST_TEMP) / temp_max,
+			label = type,
 		}
 	end
 
@@ -187,19 +208,22 @@ local function collect_temps()
 
 		local i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
 		if i then
-			temps[i] = collect_thermal_zone(i)
+			temps[#temps + 1] = collect_thermal_zone(i)
+		end
+	end
+	for bat_filename in lfs.dir("/sys/class/power_supply/") do
+		--- @cast bat_filename string
+
+		local i = tonumber(bat_filename:match("BAT([0-9]+)"))
+		if i then
+			temps[#temps + 1] = collect_bat_temps(i)
 		end
 	end
 	return temps
 end
 
---- @type {time: integer, last_cap: number, trends: number[]}[]
-local bat_histories = {}
---- @return {value: number, risk: number, trend: number|nil}[]
+--- @return {value: number, risk: number}[]
 local function collect_bats()
-	local TREND_COUNT_MIN = 3
-	local TREND_COUNT_MAX = 10
-
 	---@param bat_i number
 	---@return {type: string, value: number}?
 	local function collect_bat(bat_i)
@@ -209,22 +233,7 @@ local function collect_bats()
 			return
 		end
 
-		local history = bat_histories[bat_i] or { time = 0, last_cap = cap, trends = {} }
-		local last_trend = (cap - history.last_cap) / (os.time() - history.time)
-		history.time = os.time()
-		history.last_cap = cap
-		history.trends[#history.trends + 1] = last_trend
-		while #history.trends > TREND_COUNT_MAX do
-			table.remove(history.trends, 1)
-		end
-		bat_histories[bat_i] = history
-
-		local trend = 0
-		for _, v in ipairs(history.trends) do
-			trend = trend + v / #history.trends -- TODO not tested
-		end
-
-		return { value = cap, risk = 1 - cap / 100, trend = #history.trends >= TREND_COUNT_MIN and trend }
+		return { value = cap, risk = 1 - cap / 100 }
 	end
 
 	local bats = {}
@@ -233,13 +242,12 @@ local function collect_bats()
 
 		local i = tonumber(bat_filename:match("BAT([0-9]+)"))
 		if i then
-			bats[i] = collect_bat(i)
+			bats[#bats + 1] = collect_bat(i)
 		end
 	end
 	return bats
 end
 
--- TODO battery and power consumption
 -- TODO extend temps with /sys/class/power_supply/ temps (filtered by device symlink)
 -- TODO probably expose cooling devices
 -- TODO network traffic and health via /proc/net/dev /proc/net/wireless and
@@ -253,15 +261,19 @@ local cpu_core_count = collect_cpu_core_count()
 
 local CPU_LOAD_PERIOD = 5
 local RAM_SWAP_PERIOD = 5
-local ROOTFS_PERIOD = 60
-local TEMPS_PERIOD = 60
-local BATS_PERIOD = 60
+local ROOTFS_PERIOD = 300
+local TEMPS_PERIOD = 30
+local BATS_PERIOD = 30
 
 local cpu_load_time = 0
 local ram_swap_time = 0
 local rootfs_time = 0
 local temps_time = 0
 local bats_time = 0
+
+--- @type {time: integer, last_cap: number, trends: number[]}[]
+local bat_histories = {}
+
 while true do
 	local time = os.time()
 
@@ -277,7 +289,7 @@ while true do
 	if time - ram_swap_time >= RAM_SWAP_PERIOD then
 		ram_swap_time = time
 
-		local mem, swap = collect_mem_swap()
+		local mem, swap = collect_mem_and_swap()
 		if mem then
 			print("RAM", string.format("%.2f%s (%.2f risk)", mem.value[1], mem.value[2], mem.risk))
 		end
@@ -291,7 +303,7 @@ while true do
 
 		local rootfs = collect_rootfs()
 		if rootfs then
-			print("ROOT FREE", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
+			print("ROOT", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
 		end
 	end
 
@@ -309,7 +321,40 @@ while true do
 
 		local bats = collect_bats()
 		for i, t in pairs(bats) do
-			print("BAT" .. i, string.format("%.0f%% %+.2f%%/s (%.2f risk)", t.value, t.trend or (0 / 0), t.risk))
+			local TREND_COUNT_MIN = 3
+			local TREND_COUNT_MAX = 20
+
+			local history = bat_histories[i] or { time = 0, last_cap = t.value, trends = {} }
+			local last_trend = (t.value - history.last_cap) / (os.time() - history.time)
+			history.time = os.time()
+			history.last_cap = t.value
+			history.trends[#history.trends + 1] = last_trend
+			while #history.trends > TREND_COUNT_MAX do
+				table.remove(history.trends, 1)
+			end
+			bat_histories[i] = history
+
+			local trend = 0
+			if #history.trends >= TREND_COUNT_MIN then
+				for _, v in ipairs(history.trends) do
+					io.write(tostring(v) .. " ")
+					trend = trend + v / #history.trends
+				end
+				io.write("\n")
+			end
+
+			local time_rem = (trend <= 0 and t.value or (100 - t.value)) / trend
+			print(
+				"BAT" .. i,
+				string.format(
+					"%.0f%% %+.2f%%/m - %.1fh until %s (%.2f risk)",
+					t.value,
+					trend * 60,
+					math.abs(time_rem / 3600),
+					time_rem < 0 and "discharge" or "full charge",
+					t.risk
+				)
+			)
 		end
 	end
 
