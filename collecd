@@ -182,8 +182,8 @@ local function collect_temps()
 	end
 
 	local function collect_bat_temps(name)
-		local FALLBACK_THLD = 0 --50000
-		local BEST_TEMP = 20000
+		local FALLBACK_THLD = 0 --50
+		local BEST_TEMP = 20
 
 		--- @type number?, number?
 		local type, temp, temp_max =
@@ -196,7 +196,7 @@ local function collect_temps()
 		local thld = temp_max or FALLBACK_THLD
 
 		return {
-			value = temp / 1000,
+			value = temp,
 			risk = math.abs(temp - BEST_TEMP) / thld,
 			label = type,
 		}
