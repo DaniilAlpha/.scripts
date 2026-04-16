@@ -122,25 +122,24 @@ local function collect_rootfs()
 	}
 end
 
---- @return {[integer]: {value: number, risk: number, label: string}}
+--- @return {[string]: {value: number, risk: number, label: string}}
 local function collect_temps()
-	---@param zone_i number
+	---@param name string
 	---@return {value: number, risk: number, label: string}?
-	local function collect_thermal_zone(zone_i)
-		local FALLBACK_THLD = 100000
+	local function collect_thermal_zone(name)
+		local FALLBACK_THLD = 0 --100000
 		local BEST_TEMP = 20000
 
-		---@param tp_i number
+		---@param i number
 		---@return {type: string, value: number}?
-		local function collect_tp(tp_i)
+		local function collect_tp(i)
 			--- @type string?, number?
 			local type, temp =
-				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. tp_i .. "_type", { "*l" }),
-				read("/sys/class/thermal/thermal_zone" .. zone_i .. "/trip_point_" .. tp_i .. "_temp", { "*n" })
+				read("/sys/class/thermal/" .. name .. "/trip_point_" .. i .. "_type", { "*l" }),
+				read("/sys/class/thermal/" .. name .. "/trip_point_" .. i .. "_temp", { "*n" })
 			if not type or not temp then
 				return
 			end
-
 			-- sanity check for invalid temps
 			if temp <= 0 then
 				return
@@ -150,10 +149,10 @@ local function collect_temps()
 
 		--- @type number?, number?, number?
 		local hot_thld, critical_thld, active_thld
-		for tp_filename in lfs.dir("/sys/class/thermal/thermal_zone" .. zone_i) do
-			--- @cast tp_filename string
+		for tp_name in lfs.dir("/sys/class/thermal/" .. name) do
+			--- @cast tp_name string
 
-			local tp_i = tonumber(tp_filename:match("trip_point_([0-9]+)_type"))
+			local tp_i = tonumber(tp_name:match("trip_point_([0-9]+)_type"))
 			local tp = tp_i and collect_tp(tp_i)
 			if tp then
 				if tp.type == "hot" then
@@ -169,8 +168,8 @@ local function collect_temps()
 
 		--- @type string?, number?
 		local type, temp =
-			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/type", { "*l" }),
-			read("/sys/class/thermal/thermal_zone" .. zone_i .. "/temp", { "*n" })
+			read("/sys/class/thermal/" .. name .. "/type", { "*l" }),
+			read("/sys/class/thermal/" .. name .. "/temp", { "*n" })
 		if not temp then
 			return
 		end
@@ -182,67 +181,64 @@ local function collect_temps()
 		}
 	end
 
-	local function collect_bat_temps(bat_i)
-		local FALLBACK_THLD = 50000
+	local function collect_bat_temps(name)
+		local FALLBACK_THLD = 0 --50000
 		local BEST_TEMP = 20000
 
 		--- @type number?, number?
 		local type, temp, temp_max =
-			read("/sys/class/power_supply/BAT" .. bat_i .. "/type", { "*l" }),
-			read("/sys/class/power_supply/BAT" .. bat_i .. "/temp", { "*n" }),
-			read("/sys/class/power_supply/BAT" .. bat_i .. "/temp_max", { "*n" })
-		if not temp or not temp_max then
+			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
+			read("/sys/class/power_supply/" .. name .. "/temp", { "*n" }),
+			read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" })
+		if not temp then
 			return
 		end
+		local thld = temp_max or FALLBACK_THLD
 
 		return {
 			value = temp / 1000,
-			risk = math.abs(temp - BEST_TEMP) / temp_max,
+			risk = math.abs(temp - BEST_TEMP) / thld,
 			label = type,
 		}
 	end
 
 	local temps = {}
-	for zone_filename in lfs.dir("/sys/class/thermal/") do
-		--- @cast zone_filename string
 
-		local i = tonumber(zone_filename:match("thermal_zone([0-9]+)"))
-		if i then
-			temps[#temps + 1] = collect_thermal_zone(i)
+	for zone_name in lfs.dir("/sys/class/thermal/") do
+		--- @cast zone_name string
+
+		if zone_name:match("thermal_zone") then
+			temps[zone_name] = collect_thermal_zone(zone_name)
 		end
 	end
-	for bat_filename in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_filename string
 
-		local i = tonumber(bat_filename:match("BAT([0-9]+)"))
-		if i then
-			temps[#temps + 1] = collect_bat_temps(i)
+	for bat_name in lfs.dir("/sys/class/power_supply/") do
+		--- @cast bat_name string
+
+		if bat_name:lower():match("bat") then
+			temps[bat_name] = collect_bat_temps(bat_name)
 		end
 	end
+
 	return temps
 end
 
---- @return {value: number, risk: number}[]
+--- @return {[string]: {value: number, risk: number}}
 local function collect_bats()
-	---@param bat_i number
+	---@param bat_name string
 	---@return {type: string, value: number}?
-	local function collect_bat(bat_i)
+	local function collect_bat(bat_name)
 		--- @type number?
-		local cap = read("/sys/class/power_supply/BAT" .. bat_i .. "/capacity", { "*n" })
-		if not cap then
-			return
-		end
-
-		return { value = cap, risk = 1 - cap / 100 }
+		local cap = read("/sys/class/power_supply/" .. bat_name .. "/capacity", { "*n" })
+		return cap and { value = cap, risk = 1 - cap / 100 }
 	end
 
 	local bats = {}
-	for bat_filename in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_filename string
+	for bat_name in lfs.dir("/sys/class/power_supply/") do
+		--- @cast bat_name string
 
-		local i = tonumber(bat_filename:match("BAT([0-9]+)"))
-		if i then
-			bats[#bats + 1] = collect_bat(i)
+		if tonumber(bat_name:lower():match("bat")) then
+			bats[bat_name] = collect_bat(bat_name)
 		end
 	end
 	return bats
@@ -311,8 +307,8 @@ while true do
 		temps_time = time
 
 		local temps = collect_temps()
-		for i, t in pairs(temps) do
-			print("TEMP" .. i, string.format("%.2f oC (%.2f risk) | %s", t.value, t.risk, t.label))
+		for name, info in pairs(temps) do
+			print("TEMP " .. name, string.format("%.2f oC (%.2f risk) | %s", info.value, info.risk, info.label))
 		end
 	end
 
@@ -320,19 +316,19 @@ while true do
 		bats_time = time
 
 		local bats = collect_bats()
-		for i, t in pairs(bats) do
+		for name, info in pairs(bats) do
 			local TREND_COUNT_MIN = 3
 			local TREND_COUNT_MAX = 20
 
-			local history = bat_histories[i] or { time = 0, last_cap = t.value, trends = {} }
-			local last_trend = (t.value - history.last_cap) / (os.time() - history.time)
+			local history = bat_histories[name] or { time = 0, last_cap = info.value, trends = {} }
+			local last_trend = (info.value - history.last_cap) / (os.time() - history.time)
 			history.time = os.time()
-			history.last_cap = t.value
+			history.last_cap = info.value
 			history.trends[#history.trends + 1] = last_trend
 			while #history.trends > TREND_COUNT_MAX do
 				table.remove(history.trends, 1)
 			end
-			bat_histories[i] = history
+			bat_histories[name] = history
 
 			local trend = 0
 			if #history.trends >= TREND_COUNT_MIN then
@@ -343,16 +339,16 @@ while true do
 				io.write("\n")
 			end
 
-			local time_rem = (trend <= 0 and t.value or (100 - t.value)) / trend
+			local time_rem = (trend <= 0 and info.value or (100 - info.value)) / trend
 			print(
-				"BAT" .. i,
+				"BAT " .. name,
 				string.format(
 					"%.0f%% %+.2f%%/m - %.1fh until %s (%.2f risk)",
-					t.value,
+					info.value,
 					trend * 60,
 					math.abs(time_rem / 3600),
 					time_rem < 0 and "discharge" or "full charge",
-					t.risk
+					info.risk
 				)
 			)
 		end
