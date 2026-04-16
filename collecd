@@ -182,14 +182,26 @@ local function collect_temps()
 	end
 
 	local function collect_bat_temps(name)
-		local FALLBACK_THLD = 0 --50
-		local BEST_TEMP = 20
+		local FALLBACK_THLD = 0 --50000
+		local BEST_TEMP = 20000
+
+		local function temp_anyu_to_mc(temp_anyu)
+			if temp_anyu > 1000 then -- mC
+				return temp_anyu
+			elseif temp_anyu > 100 then -- dC
+				return temp_anyu * 100
+			else -- C
+				return temp_anyu * 1000
+			end
+		end
 
 		--- @type number?, number?
 		local type, temp, temp_max =
 			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
 			read("/sys/class/power_supply/" .. name .. "/temp", { "*n" }),
 			read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" })
+		temp = temp and temp_anyu_to_mc(temp)
+		temp_max = temp_max and temp_anyu_to_mc(temp_max)
 		if not temp then
 			return
 		end
