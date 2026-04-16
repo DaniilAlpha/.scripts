@@ -208,7 +208,7 @@ local function collect_temps()
 		local thld = temp_max or FALLBACK_THLD
 
 		return {
-			value = temp,
+			value = temp / 1000,
 			risk = math.abs(temp - BEST_TEMP) / thld,
 			label = type,
 		}
