@@ -147,6 +147,18 @@ local function collect_temps()
 			return { type = type, value = temp }
 		end
 
+		--- @type string?, number?
+		local type, temp =
+			read("/sys/class/thermal/" .. name .. "/type", { "*l" }),
+			read("/sys/class/thermal/" .. name .. "/temp", { "*n" })
+		if not type or not temp then
+			return
+		end
+		-- filter out batteries, as we are trying to collet them separately (and they usually lack a lot of info in thermal)
+		if type:lower():find("bat") then
+			return
+		end
+
 		--- @type number?, number?, number?
 		local hot_thld, critical_thld, active_thld
 		for tp_name in lfs.dir("/sys/class/thermal/" .. name) do
@@ -166,14 +178,6 @@ local function collect_temps()
 		end
 		local thld = critical_thld or hot_thld or active_thld or FALLBACK_THLD
 
-		--- @type string?, number?
-		local type, temp =
-			read("/sys/class/thermal/" .. name .. "/type", { "*l" }),
-			read("/sys/class/thermal/" .. name .. "/temp", { "*n" })
-		if not temp then
-			return
-		end
-
 		return {
 			value = temp / 1000,
 			risk = math.abs(temp - BEST_TEMP) / thld,
@@ -182,7 +186,7 @@ local function collect_temps()
 	end
 
 	local function collect_bat_temps(name)
-		local FALLBACK_THLD = 0 --50000
+		local FALLBACK_THLD = 50000
 		local BEST_TEMP = 20000
 
 		local function temp_anyu_to_mc(temp_anyu)
@@ -219,7 +223,7 @@ local function collect_temps()
 	for zone_name in lfs.dir("/sys/class/thermal/") do
 		--- @cast zone_name string
 
-		if zone_name:match("thermal_zone") then
+		if zone_name:find("thermal_zone") then
 			temps[zone_name] = collect_thermal_zone(zone_name)
 		end
 	end
@@ -227,7 +231,7 @@ local function collect_temps()
 	for bat_name in lfs.dir("/sys/class/power_supply/") do
 		--- @cast bat_name string
 
-		if bat_name:lower():match("bat") then
+		if bat_name:lower():find("bat") then
 			temps[bat_name] = collect_bat_temps(bat_name)
 		end
 	end
@@ -249,7 +253,7 @@ local function collect_bats()
 	for bat_name in lfs.dir("/sys/class/power_supply/") do
 		--- @cast bat_name string
 
-		if tonumber(bat_name:lower():match("bat")) then
+		if tonumber(bat_name:lower():find("bat")) then
 			bats[bat_name] = collect_bat(bat_name)
 		end
 	end
