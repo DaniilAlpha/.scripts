@@ -127,7 +127,7 @@ local function collect_temps()
 	---@param name string
 	---@return {value: number, risk: number, label: string}?
 	local function collect_thermal_zone(name)
-		local FALLBACK_THLD = 0 --100000
+		local FALLBACK_THLD = 90000
 		local BEST_TEMP = 20000
 
 		---@param i number
@@ -186,13 +186,13 @@ local function collect_temps()
 	end
 
 	local function collect_bat_temps(name)
-		local FALLBACK_THLD = 50000
+		local FALLBACK_THLD = 45000
 		local BEST_TEMP = 20000
 
 		local function temp_anyu_to_mc(temp_anyu)
 			if temp_anyu > 1000 then -- mC
 				return temp_anyu
-			elseif temp_anyu > 100 then -- dC
+			elseif temp_anyu > 60 then -- dC
 				return temp_anyu * 100
 			else -- C
 				return temp_anyu * 1000
