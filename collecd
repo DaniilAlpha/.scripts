@@ -66,20 +66,21 @@ end
 
 --- repeating ---
 
---- @param core_count number?
---- @return {value: number, risk: number}?
-local function collect_cpu_load(core_count)
-	core_count = core_count or 1
+local collect_cpu_load = (function()
+	local CORE_COUNT = collect_cpu_core_count() or 1
 
-	--- @type number?
-	local loadavg = read("/proc/loadavg", { "*n" })
-	if not loadavg then
-		return
+	--- @return {value: number, risk: number}?
+	return function()
+		--- @type number?
+		local loadavg = read("/proc/loadavg", { "*n" })
+		if not loadavg then
+			return
+		end
+
+		local load_relative = loadavg / CORE_COUNT
+		return { value = load_relative * 100, risk = load_relative }
 	end
-
-	local load_relative = loadavg / core_count
-	return { value = load_relative * 100, risk = load_relative }
-end
+end)()
 
 --- @return {value: { [1]: number, [2]: SiPrefix }, risk: number}?, {value: { [1]: number, [2]: SiPrefix }, risk: number}?
 local function collect_mem_and_swap()
@@ -122,10 +123,10 @@ local function collect_rootfs()
 	}
 end
 
---- @return {[string]: {value: number, risk: number, label: string}}
+--- @return {[string]: {value: number, risk: number}}
 local function collect_temps()
 	---@param name string
-	---@return {value: number, risk: number, label: string}?
+	---@return string?, {value: number, risk: number}?
 	local function collect_thermal_zone(name)
 		local FALLBACK_THLD = 90000
 		local BEST_TEMP = 20000
@@ -141,10 +142,7 @@ local function collect_temps()
 				return
 			end
 			-- sanity check for invalid temps
-			if temp <= 0 then
-				return
-			end
-			return { type = type, value = temp }
+			return temp > 0 and { type = type, value = temp } or nil
 		end
 
 		--- @type string?, number?
@@ -161,10 +159,10 @@ local function collect_temps()
 
 		--- @type number?, number?, number?
 		local hot_thld, critical_thld, active_thld
-		for tp_name in lfs.dir("/sys/class/thermal/" .. name) do
-			--- @cast tp_name string
+		for tp_filename in lfs.dir("/sys/class/thermal/" .. name) do
+			--- @cast tp_filename string
 
-			local tp_i = tonumber(tp_name:match("trip_point_([0-9]+)_type"))
+			local tp_i = tonumber(tp_filename:match("trip_point_(%d+)_type"))
 			local tp = tp_i and collect_tp(tp_i)
 			if tp then
 				if tp.type == "hot" then
@@ -178,17 +176,19 @@ local function collect_temps()
 		end
 		local thld = critical_thld or hot_thld or active_thld or FALLBACK_THLD
 
-		return {
+		return type, {
 			value = temp / 1000,
 			risk = math.abs(temp - BEST_TEMP) / thld,
-			label = type,
 		}
 	end
 
+	--- @param name string
+	--- @return string?, {value: number, risk: number}?
 	local function collect_bat_temps(name)
 		local FALLBACK_THLD = 45000
 		local BEST_TEMP = 20000
 
+		-- power_supply/*/temp* can have any units in there, thus we are guessing-converting
 		local function temp_anyu_to_mc(temp_anyu)
 			if temp_anyu > 1000 then -- mC
 				return temp_anyu
@@ -200,8 +200,7 @@ local function collect_temps()
 		end
 
 		--- @type number?, number?
-		local type, temp, temp_max =
-			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
+		local temp, temp_max =
 			read("/sys/class/power_supply/" .. name .. "/temp", { "*n" }),
 			read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" })
 		temp = temp and temp_anyu_to_mc(temp)
@@ -211,28 +210,34 @@ local function collect_temps()
 		end
 		local thld = temp_max or FALLBACK_THLD
 
-		return {
+		return name, {
 			value = temp / 1000,
 			risk = math.abs(temp - BEST_TEMP) / thld,
-			label = type,
 		}
 	end
 
+	--- @type {[string]: {value: number, risk: number}}
 	local temps = {}
 
-	for zone_name in lfs.dir("/sys/class/thermal/") do
-		--- @cast zone_name string
+	for zone_filename in lfs.dir("/sys/class/thermal/") do
+		--- @cast zone_filename string
 
-		if zone_name:find("thermal_zone") then
-			temps[zone_name] = collect_thermal_zone(zone_name)
+		if zone_filename:find("thermal_zone") then
+			local zone_name, zone_temp = collect_thermal_zone(zone_filename)
+			if zone_name then
+				temps[zone_name] = zone_temp
+			end
 		end
 	end
 
-	for bat_name in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_name string
+	for bat_filename in lfs.dir("/sys/class/power_supply/") do
+		--- @cast bat_filename string
 
-		if bat_name:lower():find("bat") then
-			temps[bat_name] = collect_bat_temps(bat_name)
+		if bat_filename:lower():find("bat") then
+			local bat_name, bat_temp = collect_bat_temps(bat_filename)
+			if bat_name then
+				temps[bat_name] = bat_temp
+			end
 		end
 	end
 
@@ -240,36 +245,41 @@ local function collect_temps()
 end
 
 --- @return {[string]: {value: number, risk: number}}
-local function collect_bats()
-	---@param bat_name string
-	---@return {type: string, value: number}?
-	local function collect_bat(bat_name)
+local function collect_bat_caps()
+	---@param name string
+	---@return string?, {value: number, risk: number}?
+	local function collect_bat_cap(name)
 		--- @type number?
-		local cap = read("/sys/class/power_supply/" .. bat_name .. "/capacity", { "*n" })
-		return cap and { value = cap, risk = 1 - cap / 100 }
+		local cap = read("/sys/class/power_supply/" .. name .. "/capacity", { "*n" })
+		if not cap then
+			return
+		end
+		return name, { value = cap, risk = 1 - cap / 100 }
 	end
 
+	--- @type {[string]: {value: number, risk: number}}
 	local bats = {}
-	for bat_name in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_name string
 
-		if tonumber(bat_name:lower():find("bat")) then
-			bats[bat_name] = collect_bat(bat_name)
+	for bat_filename in lfs.dir("/sys/class/power_supply/") do
+		--- @cast bat_filename string
+
+		if bat_filename:lower():find("bat") then
+			local bat_name, bat_cap = collect_bat_cap(bat_filename)
+			if bat_name then
+				bats[bat_name] = bat_cap
+			end
 		end
 	end
+
 	return bats
 end
 
--- TODO extend temps with /sys/class/power_supply/ temps (filtered by device symlink)
 -- TODO probably expose cooling devices
--- TODO network traffic and health via /proc/net/dev /proc/net/wireless and
--- TODO explore some advanced IO stats with /proc/diskstats
+-- TODO network traffic and health via /proc/net/dev /proc/net/wireless
 
 -----------------
 --- core loop ---
 -----------------
-
-local cpu_core_count = collect_cpu_core_count()
 
 local CPU_LOAD_PERIOD = 5
 local RAM_SWAP_PERIOD = 5
@@ -292,7 +302,7 @@ while true do
 	if time - cpu_load_time >= CPU_LOAD_PERIOD then
 		cpu_load_time = time
 
-		local cpu_load = collect_cpu_load(cpu_core_count)
+		local cpu_load = collect_cpu_load()
 		if cpu_load then
 			print("CPU", string.format("%.1f%% (%.2f risk)", cpu_load.value, cpu_load.risk))
 		end
@@ -323,23 +333,23 @@ while true do
 		temps_time = time
 
 		local temps = collect_temps()
-		for name, info in pairs(temps) do
-			print("TEMP " .. name, string.format("%.2f oC (%.2f risk) | %s", info.value, info.risk, info.label))
+		for name, temp in pairs(temps) do
+			print("TEMP " .. name, string.format("%.2f oC (%.2f risk)", temp.value, temp.risk))
 		end
 	end
 
 	if time - bats_time >= BATS_PERIOD then
 		bats_time = time
 
-		local bats = collect_bats()
-		for name, info in pairs(bats) do
+		local bats = collect_bat_caps()
+		for name, bat in pairs(bats) do
 			local TREND_COUNT_MIN = 3
 			local TREND_COUNT_MAX = 20
 
-			local history = bat_histories[name] or { time = 0, last_cap = info.value, trends = {} }
-			local last_trend = (info.value - history.last_cap) / (os.time() - history.time)
+			local history = bat_histories[name] or { time = 0, last_cap = bat.value, trends = {} }
+			local last_trend = (bat.value - history.last_cap) / (os.time() - history.time)
 			history.time = os.time()
-			history.last_cap = info.value
+			history.last_cap = bat.value
 			history.trends[#history.trends + 1] = last_trend
 			while #history.trends > TREND_COUNT_MAX do
 				table.remove(history.trends, 1)
@@ -355,16 +365,16 @@ while true do
 				io.write("\n")
 			end
 
-			local time_rem = (trend <= 0 and info.value or (100 - info.value)) / trend
+			local time_rem = (trend <= 0 and bat.value or (100 - bat.value)) / trend
 			print(
 				"BAT " .. name,
 				string.format(
 					"%.0f%% %+.2f%%/m - %.1fh until %s (%.2f risk)",
-					info.value,
+					bat.value,
 					trend * 60,
 					math.abs(time_rem / 3600),
-					time_rem < 0 and "discharge" or "full charge",
-					info.risk
+					time_rem <= 0 and "discharge" or "full charge",
+					bat.risk
 				)
 			)
 		end
