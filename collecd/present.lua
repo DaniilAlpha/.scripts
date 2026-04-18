@@ -1,31 +1,13 @@
 #!/usr/bin/lua
 
-local posix = require("posix")
-local lfs = require("lfs")
-local compute = require("compute")
 table.unpack = table.unpack or unpack
-
---- @param path string
---- @param whats ("*a"|"*l"|"*n")[]
---- @return (any)...
-local function read(path, whats)
-	local file = path:sub(1, 1) == "|" and io.popen(path:sub(2), "r") or io.open(path, "r")
-	if not file then
-		return
-	end
-	local result = {}
-	for i, what in ipairs(whats) do
-		result[i] = file:read(what)
-	end
-	file:close()
-	return table.unpack(result)
-end
-
---- @alias SiPrefix ""|"k"|"M"|"G"|"T"
+local posix = require("posix")
+local compute = require("compute")
 
 --- @param size number
+--- @alias SiPrefix ""|"k"|"M"|"G"|"T"
 --- @param prefix SiPrefix?
---- @return { [1]: number, [2]: string }
+--- @return number, SiPrefix
 local function readable_si_size(size, prefix)
 	local PREFIXES = { "", "k", "M", "G", "T" }
 
@@ -42,261 +24,30 @@ local function readable_si_size(size, prefix)
 		prefix_i = prefix_i + 1
 	end
 
-	return { size, PREFIXES[math.min(prefix_i, #PREFIXES)] }
+	return size, PREFIXES[math.min(prefix_i, #PREFIXES)]
 end
 
 ------------------
 --- collection ---
 ------------------
 
---- one-time ---
-
---- @return integer?
-local function collect_cpu_core_count()
-	local cpuinfo = read("/proc/cpuinfo", { "*a" })
-	if not cpuinfo then
-		return
-	end
-
-	local count = 0
-	for _ in cpuinfo:gmatch("processor%s+:%s+(%d+)") do
-		count = count + 1
-	end
-	return count
-end
-
---- repeating ---
-
-local collect_cpu_load = (function()
-	local CORE_COUNT = collect_cpu_core_count() or 1
-
-	--- @return {value: number, risk: number}?
-	return function()
-		--- @type number?
-		local loadavg = read("/proc/loadavg", { "*n" })
-		if not loadavg then
-			return
-		end
-
-		local load_relative = loadavg / CORE_COUNT
-		return { value = load_relative * 100, risk = load_relative }
-	end
-end)()
-
---- @return {value: { [1]: number, [2]: SiPrefix }, risk: number}?, {value: { [1]: number, [2]: SiPrefix }, risk: number}?
-local function collect_mem_and_swap()
-	--- @type string?
-	local meminfo = read("/proc/meminfo", { "*a" })
-	if not meminfo then
-		return
-	end
-
-	local mem_total = tonumber(meminfo:match("MemTotal:%s+(%d+)"))
-	local mem_free = tonumber(meminfo:match("MemAvailable:%s+(%d+)"))
-	local swap_total = tonumber(meminfo:match("SwapTotal:%s+(%d+)"))
-	local swap_free = tonumber(meminfo:match("SwapFree:%s+(%d+)"))
-
-	local mem_used = mem_total and mem_free and mem_total - mem_free
-	local swap_used = swap_total and swap_free and swap_total - swap_free
-
-	return {
-		value = mem_used and readable_si_size(mem_used, "k"),
-		risk = mem_used / mem_total,
-	}, {
-		value = swap_used and readable_si_size(swap_used, "k"),
-		risk = swap_used / swap_total,
-	}
-end
-
---- @return {value: { [1]: number, [2]: SiPrefix }, risk: number}?
-local function collect_rootfs()
-	--- @type number?, number?, number?
-	local rootfs_total_blocks, rootfs_free_blocks, rootfs_block_size =
-		read("|stat -f / -c '%b %a %S'", { "*n", "*n", "*n" })
-	if not rootfs_total_blocks or not rootfs_free_blocks or not rootfs_block_size then
-		return
-	end
-
-	local rootfs_free = rootfs_free_blocks * rootfs_block_size
-	return {
-		value = readable_si_size(rootfs_free),
-		risk = (rootfs_total_blocks - rootfs_free_blocks) / rootfs_total_blocks,
-	}
-end
-
---- @return {[string]: {value: number, risk: number}}
-local function collect_temps()
-	---@param name string
-	---@return string?, {value: number, risk: number}?
-	local function collect_thermal_zone(name)
-		local FALLBACK_THLD = 90000
-		local BEST_TEMP = 20000
-
-		---@param i number
-		---@return {type: string, value: number}?
-		local function collect_tp(i)
-			--- @type string?, number?
-			local type, temp =
-				read("/sys/class/thermal/" .. name .. "/trip_point_" .. i .. "_type", { "*l" }),
-				read("/sys/class/thermal/" .. name .. "/trip_point_" .. i .. "_temp", { "*n" })
-			if not type or not temp then
-				return
-			end
-			-- sanity check for invalid temps
-			return temp > 0 and { type = type, value = temp } or nil
-		end
-
-		--- @type string?, number?
-		local type, temp =
-			read("/sys/class/thermal/" .. name .. "/type", { "*l" }),
-			read("/sys/class/thermal/" .. name .. "/temp", { "*n" })
-		if not type or not temp then
-			return
-		end
-		-- filter out batteries, as we are trying to collet them separately (and they usually lack a lot of info in thermal)
-		if type:lower():find("bat") then
-			return
-		end
-
-		--- @type number?, number?, number?
-		local hot_thld, critical_thld, active_thld
-		for tp_filename in lfs.dir("/sys/class/thermal/" .. name) do
-			--- @cast tp_filename string
-
-			local tp_i = tonumber(tp_filename:match("trip_point_(%d+)_type"))
-			local tp = tp_i and collect_tp(tp_i)
-			if tp then
-				if tp.type == "hot" then
-					hot_thld = tp.value
-				elseif tp.type == "critical" then
-					critical_thld = tp.value
-				elseif tp.type == "active" then
-					active_thld = tp.value
-				end
-			end
-		end
-		local thld = critical_thld or hot_thld or active_thld or FALLBACK_THLD
-
-		return type, {
-			value = temp / 1000,
-			risk = math.abs(temp - BEST_TEMP) / thld,
-		}
-	end
-
-	--- @param name string
-	--- @return string?, {value: number, risk: number}?
-	local function collect_bat_temps(name)
-		local FALLBACK_THLD = 45000
-		local BEST_TEMP = 20000
-
-		-- power_supply/*/temp* can have any units in there, thus we are guessing-converting
-		local function temp_anyu_to_mc(temp_anyu)
-			if temp_anyu > 1000 then -- mC
-				return temp_anyu
-			elseif temp_anyu > 60 then -- dC
-				return temp_anyu * 100
-			else -- C
-				return temp_anyu * 1000
-			end
-		end
-
-		--- @type number?, number?
-		local temp, temp_max =
-			read("/sys/class/power_supply/" .. name .. "/temp", { "*n" }),
-			read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" })
-		temp = temp and temp_anyu_to_mc(temp)
-		temp_max = temp_max and temp_anyu_to_mc(temp_max)
-		if not temp then
-			return
-		end
-		local thld = temp_max or FALLBACK_THLD
-
-		return name, {
-			value = temp / 1000,
-			risk = math.abs(temp - BEST_TEMP) / thld,
-		}
-	end
-
-	--- @type {[string]: {value: number, risk: number}}
-	local temps = {}
-
-	for zone_filename in lfs.dir("/sys/class/thermal/") do
-		--- @cast zone_filename string
-
-		if zone_filename:find("thermal_zone") then
-			local zone_name, zone_temp = collect_thermal_zone(zone_filename)
-			if zone_name then
-				temps[zone_name] = zone_temp
-			end
-		end
-	end
-
-	for bat_filename in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_filename string
-
-		if bat_filename:lower():find("bat") then
-			local bat_name, bat_temp = collect_bat_temps(bat_filename)
-			if bat_name then
-				temps[bat_name] = bat_temp
-			end
-		end
-	end
-
-	return temps
-end
-
---- @return {[string]: {value: number, risk: number}}
-local function collect_bat_caps()
-	---@param name string
-	---@return string?, {value: number, risk: number}?
-	local function collect_bat_cap(name)
-		--- @type number?
-		local cap = read("/sys/class/power_supply/" .. name .. "/capacity", { "*n" })
-		if not cap then
-			return
-		end
-		return name, { value = cap, risk = 1 - cap / 100 }
-	end
-
-	--- @type {[string]: {value: number, risk: number}}
-	local bats = {}
-
-	for bat_filename in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_filename string
-
-		if bat_filename:lower():find("bat") then
-			local bat_name, bat_cap = collect_bat_cap(bat_filename)
-			if bat_name then
-				bats[bat_name] = bat_cap
-			end
-		end
-	end
-
-	return bats
-end
-
--- TODO probably show cooling devices
-
 -----------------
 --- core loop ---
 -----------------
 
-local CPU_LOAD_PERIOD = 30
-local RAM_SWAP_PERIOD = 30
+local CPU_LOAD_PERIOD = 5
+local RAM_SWAP_PERIOD = 5
 local ROOTFS_PERIOD = 300
 local TEMPS_PERIOD = 30
 local BATS_PERIOD = 30
-local NETFACE_PERIOD = 1
+local NETFACES_PERIOD = 10
 
 local cpu_load_time = 0
 local ram_swap_time = 0
 local rootfs_time = 0
 local temps_time = 0
 local bats_time = 0
-local netface_time = 0
-
---- @type {time: integer, last_cap: number, trends: number[]}[]
-local bat_histories = {}
+local netfaces_time = 0
 
 while true do
 	local time = os.time()
@@ -304,86 +55,55 @@ while true do
 	if time - cpu_load_time >= CPU_LOAD_PERIOD then
 		cpu_load_time = time
 
-		local cpu_load = collect_cpu_load()
+		local cpu_load = compute.cpu_load()
 		if cpu_load then
-			print("CPU", string.format("%.1f%% (%.2f risk)", cpu_load.value, cpu_load.risk))
+			print("CPU LOAD", string.format("%.2f (%.2f risk)", cpu_load.value, cpu_load.risk))
 		end
 	end
 
 	if time - ram_swap_time >= RAM_SWAP_PERIOD then
 		ram_swap_time = time
 
-		local mem, swap = collect_mem_and_swap()
+		local mem, swap = compute.mem()
 		if mem then
-			print("RAM", string.format("%.2f%s (%.2f risk)", mem.value[1], mem.value[2], mem.risk))
+			local readable_value, readable_prefix = readable_si_size(mem.value)
+			print("RAM", string.format("%.2f%s (%.2f risk)", readable_value, readable_prefix, mem.risk))
 		end
 		if swap then
-			print("SWAP", string.format("%.2f%s (%.2f risk)", swap.value[1], swap.value[2], swap.risk))
+			local readable_value, readable_prefix = readable_si_size(swap.value)
+			print("SWAP", string.format("%.2f%s (%.2f risk)", readable_value, readable_prefix, swap.risk))
 		end
 	end
 
 	if time - rootfs_time >= ROOTFS_PERIOD then
 		rootfs_time = time
 
-		local rootfs = collect_rootfs()
+		local rootfs = compute.rootfs()
 		if rootfs then
-			print("ROOT", string.format("%.2f%s (%.2f risk)", rootfs.value[1], rootfs.value[2], rootfs.risk))
-		end
-	end
-
-	if time - temps_time >= TEMPS_PERIOD then
-		temps_time = time
-
-		local temps = collect_temps()
-		for name, temp in pairs(temps) do
-			print("TEMP " .. name, string.format("%.2f oC (%.2f risk)", temp.value, temp.risk))
+			local readable_value, readable_prefix = readable_si_size(rootfs.value)
+			print("ROOT", string.format("%.2f%s (%.2f risk)", readable_value, readable_prefix, rootfs.risk))
 		end
 	end
 
 	if time - bats_time >= BATS_PERIOD then
 		bats_time = time
 
-		local bats = collect_bat_caps()
+		local bats, remain_time = compute.bats()
 		for name, bat in pairs(bats) do
-			local TREND_COUNT_MIN = 3
-			local TREND_COUNT_MAX = 20
-
-			local history = bat_histories[name] or { time = 0, last_cap = bat.value, trends = {} }
-			local last_trend = (bat.value - history.last_cap) / (os.time() - history.time)
-			history.time = os.time()
-			history.last_cap = bat.value
-			history.trends[#history.trends + 1] = last_trend
-			while #history.trends > TREND_COUNT_MAX do
-				table.remove(history.trends, 1)
-			end
-			bat_histories[name] = history
-
-			local trend = 0
-			if #history.trends >= TREND_COUNT_MIN then
-				for _, v in ipairs(history.trends) do
-					io.write(tostring(v) .. " ")
-					trend = trend + v / #history.trends
-				end
-				io.write("\n")
-			end
-
-			local time_rem = (trend <= 0 and bat.value or (100 - bat.value)) / trend
 			print(
 				"BAT " .. name,
-				string.format(
-					"%.0f%% %+.2f%%/m - %.1fh until %s (%.2f risk)",
-					bat.value,
-					trend * 60,
-					math.abs(time_rem / 3600),
-					time_rem <= 0 and "discharge" or "full charge",
-					bat.risk
-				)
+				string.format("%.0f%% %+.2f%%/m (%.2f risk)", bat.value.charge, bat.value.rate * 60, bat.risk)
 			)
 		end
+		print(
+			"TIME UNTIL",
+			remain_time <= 0 and "discharge" or "full charge",
+			string.format("%.2fh", math.abs(remain_time / 3600))
+		)
 	end
 
-	if time - netface_time >= NETFACE_PERIOD then
-		netface_time = time
+	if time - netfaces_time >= NETFACES_PERIOD then
+		netfaces_time = time
 
 		local faces = compute.netfaces()
 		for name, face in pairs(faces) do
@@ -395,6 +115,15 @@ while true do
 					face.rx.risk * 0.5 + face.tx.risk * 0.5
 				)
 			)
+		end
+	end
+
+	if time - temps_time >= TEMPS_PERIOD then
+		temps_time = time
+
+		local temps = compute.temps()
+		for name, temp in pairs(temps) do
+			print("TEMP " .. name, string.format("%.2fC (%.2f risk)", temp.value, temp.risk))
 		end
 	end
 
