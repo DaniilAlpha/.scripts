@@ -2,6 +2,7 @@
 
 local posix = require("posix")
 local lfs = require("lfs")
+local compute = require("compute")
 table.unpack = table.unpack or unpack
 
 --- @param path string
@@ -274,55 +275,18 @@ local function collect_bat_caps()
 	return bats
 end
 
---- @return {[string]: {value: number, risk: number}}
-local function collect_netfaces()
-	---@param name string
-	---@return string?, {value: number, risk: number}?
-	local function collect_netface_problems(name)
-		--- @type number?, number?, number?, number?
-		local rx_errors, rx_dropped, tx_errors, tx_dropped =
-			read("/sys/class/net/" .. name .. "/statistics/rx_errors", { "*n" }),
-			read("/sys/class/net/" .. name .. "/statistics/rx_dropped", { "*n" }),
-			read("/sys/class/net/" .. name .. "/statistics/tx_errors", { "*n" }),
-			read("/sys/class/net/" .. name .. "/statistics/tx_dropped", { "*n" })
-		if not rx_errors or not rx_dropped or not tx_errors or not tx_dropped then
-			return
-		end
-
-		local total = rx_errors + rx_dropped + tx_errors + tx_dropped
-
-		return name, { value = total, risk = total / 10 }
-	end
-
-	--- @type {[string]: {value: number, risk: number}}
-	local faces = {}
-
-	for face_filename in lfs.dir("/sys/class/net/") do
-		--- @cast face_filename string
-
-		local face_name, face_problems = collect_netface_problems(face_filename)
-		if face_name then
-			faces[face_name] = face_problems
-		end
-	end
-
-	return faces
-end
-
--- TODO probably should make netfaces compute delta instead of absolute value
--- TODO netfaces probably should somehow differ rx_errors, rx_dropped, tx_errors, tx_dropped
 -- TODO probably show cooling devices
 
 -----------------
 --- core loop ---
 -----------------
 
-local CPU_LOAD_PERIOD = 5
-local RAM_SWAP_PERIOD = 5
+local CPU_LOAD_PERIOD = 30
+local RAM_SWAP_PERIOD = 30
 local ROOTFS_PERIOD = 300
 local TEMPS_PERIOD = 30
 local BATS_PERIOD = 30
-local NETFACE_PERIOD = 30
+local NETFACE_PERIOD = 1
 
 local cpu_load_time = 0
 local ram_swap_time = 0
@@ -421,9 +385,16 @@ while true do
 	if time - netface_time >= NETFACE_PERIOD then
 		netface_time = time
 
-		local netfaces = collect_netfaces()
-		for name, netface in pairs(netfaces) do
-			print("network interface " .. name, string.format("%.2f oC (%.2f risk)", netface.value, netface.risk))
+		local faces = compute.netfaces()
+		for name, face in pairs(faces) do
+			print(
+				"NETFACE " .. name,
+				string.format(
+					"rx: %.2f Mbps (%.2f risk)",
+					(face.rx.value + face.tx.value) * 8 / 1048576,
+					face.rx.risk * 0.5 + face.tx.risk * 0.5
+				)
+			)
 		end
 	end
 
