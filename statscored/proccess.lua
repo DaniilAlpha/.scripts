@@ -67,7 +67,7 @@ proccess.bats = (function()
 
 			stats[name] = {
 				value = { charge = bat, rate = rate },
-				risk = (1 - bat / 100) * CHARGE_RISK + (rate > 0 and 0 or bat / -rate) / CRITICAL_TIME * TIME_RISK,
+				risk = (1 - bat / 100) * CHARGE_RISK + math.max(0, bat / -rate) / CRITICAL_TIME * TIME_RISK,
 			}
 		end
 
