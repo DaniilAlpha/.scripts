@@ -4,19 +4,13 @@ table.unpack = table.unpack or unpack
 local posix = require("posix")
 local proccess = require("proccess")
 
-local CPU_LOAD_PERIOD = 5
-local RAM_SWAP_PERIOD = 5
-local ROOTFS_PERIOD = 300
-local TEMPS_PERIOD = 30
-local BATS_PERIOD = 30
-local NETFACES_PERIOD = 10
-
-local cpu_load_time = 0
-local ram_swap_time = 0
-local rootfs_time = 0
-local temps_time = 0
-local bats_time = 0
-local netfaces_time = 0
+local TICK_PERIOD = 4
+local CPU_LOAD_PERIOD_TICKS = 1
+local RAM_SWAP_PERIOD_TICKS = 1
+local ROOTFS_PERIOD_TICKS = 64
+local TEMPS_PERIOD_TICKS = 8
+local BATS_PERIOD_TICKS = 16
+local NETFACES_PERIOD_TICKS = 2
 
 --- formatters ---
 
@@ -155,34 +149,25 @@ local presentation = {
 	netfaces = {},
 }
 
+local tick = 0
 while true do
-	local time = os.time()
-
-	if time - cpu_load_time >= CPU_LOAD_PERIOD then
-		cpu_load_time = time
-
+	if tick % CPU_LOAD_PERIOD_TICKS == 0 then
 		local cpu_load = proccess.cpu_load()
 		presentation.cpu_load = cpu_load and { value = tostring(cpu_load.value), risk = cpu_load.risk }
 	end
 
-	if time - ram_swap_time >= RAM_SWAP_PERIOD then
-		ram_swap_time = time
-
+	if tick % RAM_SWAP_PERIOD_TICKS == 0 then
 		local ram, swap = proccess.mem()
 		presentation.ram = ram and { value = tostring_si(ram.value, "B"), risk = ram.risk }
 		presentation.swap = swap and { value = tostring_si(swap.value, "B"), risk = swap.risk }
 	end
 
-	if time - rootfs_time >= ROOTFS_PERIOD then
-		rootfs_time = time
-
+	if tick % ROOTFS_PERIOD_TICKS == 0 then
 		local rootfs = proccess.rootfs()
 		presentation.fs["/"] = rootfs and { value = tostring_si(rootfs.value, "B"), risk = rootfs.risk }
 	end
 
-	if time - bats_time >= BATS_PERIOD then
-		bats_time = time
-
+	if tick % BATS_PERIOD_TICKS == 0 then
 		local bats, remain_time = proccess.bats()
 		for name, bat in pairs(bats) do
 			presentation.bats[1][name] = {
@@ -193,18 +178,14 @@ while true do
 		presentation.bats.remain_time, presentation.bats.is_charging = tostrign_time(remain_time), remain_time > 0
 	end
 
-	if time - temps_time >= TEMPS_PERIOD then
-		temps_time = time
-
+	if tick % TEMPS_PERIOD_TICKS == 0 then
 		local temps = proccess.temps()
 		for name, temp in pairs(temps) do
 			presentation.temps[name] = { value = math.ceil(temp.value) .. "°C", risk = temp.risk }
 		end
 	end
 
-	if time - netfaces_time >= NETFACES_PERIOD then
-		netfaces_time = time
-
+	if tick % NETFACES_PERIOD_TICKS then
 		local faces = proccess.netfaces()
 		for name, face in pairs(faces) do
 			presentation.netfaces[name] = {
@@ -220,5 +201,6 @@ while true do
 		f:close()
 	end
 
-	posix.sleep(1)
+	posix.sleep(TICK_PERIOD)
+	tick = tick + 1
 end
