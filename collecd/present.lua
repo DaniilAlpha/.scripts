@@ -2,12 +2,28 @@
 
 table.unpack = table.unpack or unpack
 local posix = require("posix")
-local compute = require("compute")
+local proccess = require("proccess")
 
---- @param size number
---- @alias SiPrefix ""|"k"|"M"|"G"|"T"
---- @param prefix SiPrefix?
---- @return number, SiPrefix
+local CPU_LOAD_PERIOD = 5
+local RAM_SWAP_PERIOD = 5
+local ROOTFS_PERIOD = 300
+local TEMPS_PERIOD = 30
+local BATS_PERIOD = 30
+local NETFACES_PERIOD = 10
+
+local cpu_load_time = 0
+local ram_swap_time = 0
+local rootfs_time = 0
+local temps_time = 0
+local bats_time = 0
+local netfaces_time = 0
+
+--- formatters ---
+
+---@param size number
+---@alias SiPrefix ""|"k"|"M"|"G"|"T"
+---@param prefix SiPrefix?
+---@return number, SiPrefix
 local function readable_si_size(size, prefix)
 	local PREFIXES = { "", "k", "M", "G", "T" }
 
@@ -27,27 +43,7 @@ local function readable_si_size(size, prefix)
 	return size, PREFIXES[math.min(prefix_i, #PREFIXES)]
 end
 
-------------------
---- collection ---
-------------------
-
------------------
 --- core loop ---
------------------
-
-local CPU_LOAD_PERIOD = 5
-local RAM_SWAP_PERIOD = 5
-local ROOTFS_PERIOD = 300
-local TEMPS_PERIOD = 30
-local BATS_PERIOD = 30
-local NETFACES_PERIOD = 10
-
-local cpu_load_time = 0
-local ram_swap_time = 0
-local rootfs_time = 0
-local temps_time = 0
-local bats_time = 0
-local netfaces_time = 0
 
 while true do
 	local time = os.time()
@@ -55,7 +51,7 @@ while true do
 	if time - cpu_load_time >= CPU_LOAD_PERIOD then
 		cpu_load_time = time
 
-		local cpu_load = compute.cpu_load()
+		local cpu_load = proccess.cpu_load()
 		if cpu_load then
 			print("CPU LOAD", string.format("%.2f (%.2f risk)", cpu_load.value, cpu_load.risk))
 		end
@@ -64,7 +60,7 @@ while true do
 	if time - ram_swap_time >= RAM_SWAP_PERIOD then
 		ram_swap_time = time
 
-		local mem, swap = compute.mem()
+		local mem, swap = proccess.mem()
 		if mem then
 			local readable_value, readable_prefix = readable_si_size(mem.value)
 			print("RAM", string.format("%.2f%s (%.2f risk)", readable_value, readable_prefix, mem.risk))
@@ -78,7 +74,7 @@ while true do
 	if time - rootfs_time >= ROOTFS_PERIOD then
 		rootfs_time = time
 
-		local rootfs = compute.rootfs()
+		local rootfs = proccess.rootfs()
 		if rootfs then
 			local readable_value, readable_prefix = readable_si_size(rootfs.value)
 			print("ROOT", string.format("%.2f%s (%.2f risk)", readable_value, readable_prefix, rootfs.risk))
@@ -88,7 +84,7 @@ while true do
 	if time - bats_time >= BATS_PERIOD then
 		bats_time = time
 
-		local bats, remain_time = compute.bats()
+		local bats, remain_time = proccess.bats()
 		for name, bat in pairs(bats) do
 			print(
 				"BAT " .. name,
@@ -105,7 +101,7 @@ while true do
 	if time - netfaces_time >= NETFACES_PERIOD then
 		netfaces_time = time
 
-		local faces = compute.netfaces()
+		local faces = proccess.netfaces()
 		for name, face in pairs(faces) do
 			print(
 				"NETFACE " .. name,
@@ -121,7 +117,7 @@ while true do
 	if time - temps_time >= TEMPS_PERIOD then
 		temps_time = time
 
-		local temps = compute.temps()
+		local temps = proccess.temps()
 		for name, temp in pairs(temps) do
 			print("TEMP " .. name, string.format("%.2fC (%.2f risk)", temp.value, temp.risk))
 		end

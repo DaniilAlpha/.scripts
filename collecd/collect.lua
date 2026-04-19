@@ -1,9 +1,9 @@
 local posix = require("posix")
 local lfs = require("lfs")
 
---- @param path string
---- @param whats ("*a"|"*l"|"*n")[]
---- @return (any)...
+---@param path string
+---@param whats ("*a"|"*l"|"*n")[]
+---@return (any)...
 local function read(path, whats)
 	local file = path:sub(1, 1) == "|" and io.popen(path:sub(2), "r") or io.open(path, "r")
 	if not file then
@@ -21,9 +21,9 @@ end
 
 local collect = {}
 
---- @type integer
+---@type integer
 collect.CPU_COUNT = (function()
-	--- @type string
+	---@type string
 	local cpuinfo = read("/proc/cpuinfo", { "*a" })
 	if not cpuinfo then
 		return 1
@@ -36,16 +36,16 @@ collect.CPU_COUNT = (function()
 	return count
 end)()
 
---- @alias CpuLoadInfo integer
---- @return CpuLoadInfo?
+---@alias CpuLoadInfo integer
+---@return CpuLoadInfo?
 function collect.cpu_load()
 	return read("/proc/loadavg", { "*n" })
 end
 
 ---@alias MemInfo {used_kb: integer, total_kb: integer}
---- @return MemInfo?, MemInfo?
+---@return MemInfo?, MemInfo?
 function collect.mem()
-	--- @type string?
+	---@type string?
 	local meminfo = read("/proc/meminfo", { "*a" })
 	if meminfo then
 		local ram_total, ram_free, swap_total, swap_free =
@@ -63,11 +63,11 @@ function collect.mem()
 end
 
 ---@alias FSInfo {free: integer, total: integer}
---- @return FSInfo?
+---@return FSInfo?
 function collect.rootfs()
 	local statvfs = posix.statvfs("/")
 	if statvfs then
-		--- @type number?, number?, number?
+		---@type integer?, integer?, integer?
 		local total_blocks, free_blocks, block_size = statvfs.blocks, statvfs.bfree, statvfs.frsize
 
 		local free = free_blocks and block_size and free_blocks * block_size
@@ -77,8 +77,8 @@ function collect.rootfs()
 	end
 end
 
---- @alias BatInfo integer
---- @return {[string]: BatInfo}
+---@alias BatInfo integer
+---@return {[string]: BatInfo}
 function collect.bats()
 	---@param name string
 	---@return BatInfo?
@@ -86,10 +86,10 @@ function collect.bats()
 		return read("/sys/class/power_supply/" .. name .. "/capacity", { "*n" })
 	end
 
-	--- @type {[string]: BatInfo}
+	---@type {[string]: BatInfo}
 	local bats = {}
 	for name in lfs.dir("/sys/class/power_supply/") do
-		--- @cast name string
+		---@cast name string
 		if name:lower():find("bat") then
 			bats[name] = bat(name)
 		end
@@ -100,12 +100,12 @@ end
 
 ---@alias NetfaceDirInfo {data_amount: integer, error_count: integer, dropped_count: integer}
 ---@alias NetfaceInfo {rx: NetfaceDirInfo, tx: NetfaceDirInfo}
---- @return {[string]: NetfaceInfo}
+---@return {[string]: NetfaceInfo}
 function collect.netfaces()
 	---@param name string
 	---@return NetfaceInfo?
 	local function netface(name)
-		--- @type integer?, integer?, integer?, integer?, integer?, integer?
+		---@type integer?, integer?, integer?, integer?, integer?, integer?
 		local rx_bytes, rx_errors, rx_dropped, tx_bytes, tx_errors, tx_dropped =
 			read("/sys/class/net/" .. name .. "/statistics/rx_bytes", { "*n" }),
 			read("/sys/class/net/" .. name .. "/statistics/rx_errors", { "*n" }),
@@ -121,132 +121,128 @@ function collect.netfaces()
 		end
 	end
 
-	--- @type {[string]: NetfaceInfo}
+	---@type {[string]: NetfaceInfo}
 	local faces = {}
 	for name in lfs.dir("/sys/class/net/") do
-		--- @cast name string
+		---@cast name string
 		faces[name] = netface(name)
 	end
 
 	return faces
 end
 
--- TODO! refactor this function
---- @return {[string]: {value: number, risk: number}}
-function collect.temps()
-	---@param name string
-	---@return string?, {value: number, risk: number}?
-	local function collect_thermal_zone(name)
-		local FALLBACK_THLD = 90000
-		local BEST_TEMP = 20000
-
-		---@param i number
-		---@return {type: string, value: number}?
-		local function collect_tp(i)
-			--- @type string?, number?
-			local type, temp =
-				read("/sys/class/thermal/" .. name .. "/trip_point_" .. i .. "_type", { "*l" }),
-				read("/sys/class/thermal/" .. name .. "/trip_point_" .. i .. "_temp", { "*n" })
-			if not type or not temp then
-				return
+---@alias TpType "hot"|"critical"|"active"|"passive"
+---@alias ThermalZoneInfo {temp_mc: integer, trip_points_mc: {[TpType]: number}}
+---@return {[string]: ThermalZoneInfo}
+function collect.thermal_zones()
+	---@param i integer
+	---@return string?, ThermalZoneInfo?
+	local function thermal_zone(i)
+		---@param j integer
+		---@return TpType?, integer?
+		local function trip_point_mc(j)
+			---@type TpType?, integer?
+			local type, temp_mc =
+				read("/sys/class/thermal/thermal_zone" .. i .. "/trip_point_" .. j .. "_type", { "*l" }),
+				read("/sys/class/thermal/thermal_zone" .. i .. "/trip_point_" .. j .. "_temp", { "*n" })
+			if type and temp_mc then
+				return type, temp_mc
 			end
-			-- sanity check for invalid temps
-			return temp > 0 and { type = type, value = temp } or nil
 		end
 
-		--- @type string?, number?
-		local type, temp =
-			read("/sys/class/thermal/" .. name .. "/type", { "*l" }),
-			read("/sys/class/thermal/" .. name .. "/temp", { "*n" })
-		if not type or not temp then
+		---@type string?, integer?
+		local type, temp_mc =
+			read("/sys/class/thermal/thermal_zone" .. i .. "/type", { "*l" }),
+			read("/sys/class/thermal/thermal_zone" .. i .. "/temp", { "*n" })
+		if not type or not temp_mc then
 			return
 		end
-		-- filter out batteries, as we are trying to collet them separately (and they usually lack a lot of info in thermal)
+
+		-- filter out batteries, as we are collecting them separately (and they usually lack info in thermal)
 		if type:lower():find("bat") then
 			return
 		end
 
-		--- @type number?, number?, number?
-		local hot_thld, critical_thld, active_thld
-		for tp_filename in lfs.dir("/sys/class/thermal/" .. name) do
-			--- @cast tp_filename string
-
-			local tp_i = tonumber(tp_filename:match("trip_point_(%d+)_type"))
-			local tp = tp_i and collect_tp(tp_i)
-			if tp then
-				if tp.type == "hot" then
-					hot_thld = tp.value
-				elseif tp.type == "critical" then
-					critical_thld = tp.value
-				elseif tp.type == "active" then
-					active_thld = tp.value
+		---@type {[TpType]: integer}
+		local trip_points_mc = {}
+		for tp_filename in lfs.dir("/sys/class/thermal/thermal_zone" .. i) do
+			---@cast tp_filename string
+			local j = tonumber(tp_filename:match("trip_point_(%d+)_type"))
+			if j then
+				local tp_type, tp_temp_mc = trip_point_mc(j)
+				if tp_type then
+					trip_points_mc[tp_type] = tp_temp_mc
 				end
 			end
 		end
-		local thld = critical_thld or hot_thld or active_thld or FALLBACK_THLD
 
 		return type, {
-			value = temp / 1000,
-			risk = math.abs(temp - BEST_TEMP) / thld,
+			temp_mc = temp_mc,
+			trip_points_mc = trip_points_mc,
 		}
 	end
 
-	--- @param name string
-	--- @return string?, {value: number, risk: number}?
-	local function collect_bat_temps(name)
-		local FALLBACK_THLD = 45000
-		local BEST_TEMP = 20000
-
-		-- power_supply/*/temp* can have any units in there, thus we are guessing-converting
-		local function temp_anyu_to_mc(temp_anyu)
-			if temp_anyu > 1000 then -- mC
-				return temp_anyu
-			elseif temp_anyu > 60 then -- dC
-				return temp_anyu * 100
-			else -- C
-				return temp_anyu * 1000
-			end
-		end
-
-		--- @type number?, number?
-		local temp, temp_max =
-			read("/sys/class/power_supply/" .. name .. "/temp", { "*n" }),
-			read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" })
-		temp = temp and temp_anyu_to_mc(temp)
-		temp_max = temp_max and temp_anyu_to_mc(temp_max)
-		if not temp then
-			return
-		end
-		local thld = temp_max or FALLBACK_THLD
-
-		return name, {
-			value = temp / 1000,
-			risk = math.abs(temp - BEST_TEMP) / thld,
-		}
-	end
-
-	--- @type {[string]: {value: number, risk: number}}
+	---@type {[string]: ThermalZoneInfo}
 	local temps = {}
-
 	for zone_filename in lfs.dir("/sys/class/thermal/") do
-		--- @cast zone_filename string
+		---@cast zone_filename string
+		local i = tonumber(zone_filename:match("thermal_zone(%d+)"))
+		if i then
+			local name, info = thermal_zone(i)
+			if name then
+				if temps[name] then
+					local j = 1
+					while temps[name .. j] do
+						j = j + 1
+					end
+					name = name .. j
+				end
 
-		if zone_filename:find("thermal_zone") then
-			local zone_name, zone_temp = collect_thermal_zone(zone_filename)
-			if zone_name then
-				temps[zone_name] = zone_temp
+				temps[name] = info
 			end
 		end
 	end
 
-	for bat_filename in lfs.dir("/sys/class/power_supply/") do
-		--- @cast bat_filename string
+	return temps
+end
 
-		if bat_filename:lower():find("bat") then
-			local bat_name, bat_temp = collect_bat_temps(bat_filename)
-			if bat_name then
-				temps[bat_name] = bat_temp
+---@alias BatTempInfo {temp_mc: integer, temp_max_mc: integer?}
+---@return {[string]: BatTempInfo}
+function collect.bats_temps()
+	---@param anyu integer?
+	---@return integer?
+	local function temp_anyu_to_mc(anyu)
+		if anyu then
+			-- power_supply/*/temp* can have any units in there, thus we are guessing-converting
+			if anyu > 1000 then -- mC
+				return anyu
+			elseif anyu > 60 then -- dC
+				return anyu * 100
+			else -- C
+				return anyu * 1000
 			end
+		end
+	end
+
+	---@param name string
+	---@return BatTempInfo?
+	local function bat_temp(name)
+		---@type integer?, integer?
+		local temp_mc, max_temp_mc =
+			temp_anyu_to_mc(read("/sys/class/power_supply/" .. name .. "/temp", { "*n" })),
+			temp_anyu_to_mc(read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" }))
+		if temp_mc then
+			return { temp_mc = temp_mc, temp_max_mc = max_temp_mc }
+		end
+	end
+
+	---@type {[string]: BatTempInfo}
+	local temps = {}
+	for bat_name in lfs.dir("/sys/class/power_supply/") do
+		---@cast bat_name string
+		if bat_name:lower():find("bat") then
+			local info = bat_temp(bat_name)
+			temps[bat_name] = info
 		end
 	end
 
