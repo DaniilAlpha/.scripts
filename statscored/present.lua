@@ -23,9 +23,8 @@ local netfaces_time = 0
 ---@param size number
 ---@alias SiPrefix ""|"k"|"M"|"G"|"T"
 ---@param prefix SiPrefix?
----@alias ReadableSiSize {[1]: number, prefix: SiPrefix}
----@return ReadableSiSize
-local function readable_si_size(size, prefix)
+---@return number, SiPrefix
+local function optimal_si_prefix(size, prefix)
 	local PREFIXES = { "", "k", "M", "G", "T" }
 
 	local prefix_i = 1
@@ -41,7 +40,60 @@ local function readable_si_size(size, prefix)
 		prefix_i = prefix_i + 1
 	end
 
-	return { size, prefix = PREFIXES[math.min(prefix_i, #PREFIXES)] }
+	return size, PREFIXES[math.min(prefix_i, #PREFIXES)]
+end
+
+---@param value number
+---@param unit string?
+---@param char_count number?
+---@return string
+local function tostring_si(value, unit, char_count)
+	unit = unit or ""
+	char_count = char_count or 5
+
+	if -math.huge >= value or value >= math.huge then
+		return string.rep(" ", char_count - 3) .. "inf" .. unit
+	elseif value ~= value then
+		return string.rep(" ", char_count - 3) .. "nan" .. unit
+	else
+		local prefix
+		value, prefix = optimal_si_prefix(value, prefix)
+		char_count = char_count - (prefix == "" and 0 or 1)
+
+		local digit_count = math.min(math.max(math.ceil(math.log(value, 10)), 1), char_count - 1)
+		return string.format("%" .. char_count .. "." .. char_count - 1 - digit_count .. "f%s", value, prefix .. unit)
+	end
+end
+
+-- print(tostring_si(-(1. / 0), "u"))
+-- print(tostring_si((1. / 0), "u"))
+-- print(tostring_si((0. / 0), "u"))
+-- print(tostring_si(0, "u"))
+-- print(tostring_si(0.531, "u"))
+-- print(tostring_si(0.33, "u"))
+-- print(tostring_si(0.5, "u"))
+-- print(tostring_si(3, "u"))
+-- print(tostring_si(33, "u"))
+-- print(tostring_si(840, "u"))
+-- print(tostring_si(6577, "u"))
+-- print(tostring_si(99999, "u"))
+-- print(tostring_si(816333, "u"))
+-- print(tostring_si(5131483, "u"))
+
+---@param time number
+---@return string
+local function tostrign_time(time)
+	time = math.abs(time)
+
+	if time >= math.huge then
+		return "forever"
+	else
+		local seconds = time % 60
+		local minutes = math.floor(time / 60) % 60
+		local hours = math.floor(time / 3600)
+
+		return string.format("%d:%02d:%04.1f", hours, minutes, seconds)
+	end
 end
 
 ---@param obj any
@@ -83,13 +135,13 @@ end
 --- core loop ---
 
 ---@class Presentation
----@field cpu_load Stats<number>?
----@field ram Stats<ReadableSiSize>?
----@field swap Stats<ReadableSiSize>?
----@field fs {["/"]: Stats<ReadableSiSize>?}
----@field bats {[1]: {[string]: Stats<{charge: integer, rate: number}>}, remain_time: number?}
----@field temps {[string]: Stats<number>}
----@field netfaces {[string]: Stats<ReadableSiSize>}
+---@field cpu_load Stats<string>?
+---@field ram Stats<string>?
+---@field swap Stats<string>?
+---@field fs {["/"]: Stats<string>?}
+---@field bats {[1]: {[string]: Stats<string>}, remain_time: string?, is_charging: boolean?}
+---@field temps {[string]: Stats<string>}
+---@field netfaces {[string]: Stats<string>}
 
 ---@type Presentation
 local presentation = {
@@ -97,7 +149,7 @@ local presentation = {
 	ram = nil,
 	swap = nil,
 	fs = { ["/"] = nil },
-	bats = { {}, remain_time = nil },
+	bats = { {}, remain_time = nil, is_charging = nil },
 	remain_time = nil,
 	temps = {},
 	netfaces = {},
@@ -110,41 +162,44 @@ while true do
 		cpu_load_time = time
 
 		local cpu_load = proccess.cpu_load()
-		presentation.cpu_load = cpu_load
+		presentation.cpu_load = cpu_load and { value = tostring(cpu_load.value), risk = cpu_load.risk }
 	end
 
 	if time - ram_swap_time >= RAM_SWAP_PERIOD then
 		ram_swap_time = time
 
 		local ram, swap = proccess.mem()
-		presentation.ram = ram and { value = readable_si_size(ram.value), risk = ram.risk }
-		presentation.swap = swap and { value = readable_si_size(swap.value), risk = swap.risk }
+		presentation.ram = ram and { value = tostring_si(ram.value, "B"), risk = ram.risk }
+		presentation.swap = swap and { value = tostring_si(swap.value, "B"), risk = swap.risk }
 	end
 
 	if time - rootfs_time >= ROOTFS_PERIOD then
 		rootfs_time = time
 
 		local rootfs = proccess.rootfs()
-		presentation.fs["/"] = rootfs and { value = readable_si_size(rootfs.value), risk = rootfs.risk }
+		presentation.fs["/"] = rootfs and { value = tostring_si(rootfs.value, "B"), risk = rootfs.risk }
 	end
 
 	if time - bats_time >= BATS_PERIOD then
 		bats_time = time
 
 		local bats, remain_time = proccess.bats()
-		presentation.bats = { bats, remain_time = remain_time }
-		-- print(
-		-- 	"TIME UNTIL",
-		-- 	remain_time <= 0 and "discharge" or "full charge",
-		-- 	string.format("%.2fh", math.abs(remain_time / 3600))
-		-- )
+		for name, bat in pairs(bats) do
+			presentation.bats[1][name] = {
+				value = string.format("%s%% %+.2f%%/m", bat.value.charge, bat.value.rate * 60),
+				risk = bat.risk,
+			}
+		end
+		presentation.bats.remain_time, presentation.bats.is_charging = tostrign_time(remain_time), remain_time > 0
 	end
 
 	if time - temps_time >= TEMPS_PERIOD then
 		temps_time = time
 
 		local temps = proccess.temps()
-		presentation.temps = temps
+		for name, temp in pairs(temps) do
+			presentation.temps[name] = { value = math.ceil(temp.value) .. "°C", risk = temp.risk }
+		end
 	end
 
 	if time - netfaces_time >= NETFACES_PERIOD then
@@ -153,7 +208,7 @@ while true do
 		local faces = proccess.netfaces()
 		for name, face in pairs(faces) do
 			presentation.netfaces[name] = {
-				value = readable_si_size((face.rx.value + face.tx.value) * 8),
+				value = tostring_si((face.rx.value + face.tx.value) * 8, "bps"),
 				risk = face.rx.risk * 0.5 + face.tx.risk * 0.5,
 			}
 		end

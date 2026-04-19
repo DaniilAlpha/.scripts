@@ -67,16 +67,16 @@ proccess.bats = (function()
 
 			stats[name] = {
 				value = { charge = bat, rate = rate },
-				risk = (1 - bat / 100) * CHARGE_RISK + math.max(0, bat / -rate) / CRITICAL_TIME * TIME_RISK,
+				risk = (1 - bat / 100) * CHARGE_RISK + (rate < 0 and (bat / -rate) or 0) / CRITICAL_TIME * TIME_RISK,
 			}
 		end
 
 		local total_charge, total_rate = 0, 0
 		for _, bat in pairs(stats) do
 			total_charge = total_charge + bat.value.charge
-			total_rate = total_charge + bat.value.rate
+			total_rate = total_rate + bat.value.rate
 		end
-		local total_remain_time = (total_rate > 0 and (#stats * 100 - total_charge) or total_charge) / total_rate
+		local total_remain_time = (total_rate >= 0 and (#stats * 100 - total_charge) or total_charge) / total_rate
 
 		last_time = time
 
