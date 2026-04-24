@@ -10,7 +10,7 @@ local function realtime()
 	return sec + nsec / 1000000000
 end
 
---- computation ---
+--- proccessing ---
 
 local proccess = {}
 

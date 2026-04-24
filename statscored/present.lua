@@ -1,16 +1,4 @@
-#!/usr/bin/lua
-
-table.unpack = table.unpack or unpack
-local posix = require("posix")
 local proccess = require("proccess")
-
-local TICK_PERIOD = 4
-local CPU_LOAD_PERIOD_TICKS = 1
-local RAM_SWAP_PERIOD_TICKS = 1
-local ROOTFS_PERIOD_TICKS = 64
-local TEMPS_PERIOD_TICKS = 8
-local BATS_PERIOD_TICKS = 16
-local NETFACES_PERIOD_TICKS = 2
 
 --- formatters ---
 
@@ -75,58 +63,34 @@ end
 -- print(tostring_si(5131483, "u"))
 
 ---@param time number
----@return string
+---@return string?
 local function tostrign_time(time)
 	time = math.abs(time)
 
-	if time >= math.huge then
+	if -math.huge >= time or time >= math.huge then
 		return "forever"
+	elseif time ~= time then
+		return "unknown"
 	else
 		local seconds = time % 60
 		local minutes = math.floor(time / 60) % 60
 		local hours = math.floor(time / 3600)
-
-		return string.format("%d:%02d:%04.1f", hours, minutes, seconds)
+		return string.format("%.0f:%02.0f:%04.1f", hours, minutes, seconds)
 	end
 end
 
----@param obj any
----@return string
-local function serialize(obj)
-	local t = type(obj)
+-- print(tostrign_time(0.05))
+-- print(tostrign_time(1.05))
+-- print(tostrign_time(100))
+-- print(tostrign_time(1000))
+-- print(tostrign_time(9001))
+-- print(tostrign_time(10000000))
+-- print(tostrign_time(1 / 0))
+-- print(tostrign_time(0 / 0))
 
-	if t == "number" or t == "boolean" then
-		return tostring(obj)
-	elseif t == "string" then
-		return string.format("%q", obj)
-	elseif t == "table" then
-		local parts = {}
-		for k, v in pairs(obj) do
-			local kt = type(k)
-			---@type string?
-			local k_slzd = nil
-			if kt == "number" or kt == "boolean" then
-				k_slzd = tostring(k)
-			elseif kt == "string" then
-				k_slzd = string.format("%q", k)
-			end
+--- presentation ---
 
-			if k_slzd then
-				local serialized_v = serialize(v)
-				parts[#parts + 1] = "[" .. k_slzd .. "] = " .. serialized_v
-			else
-				parts[#parts + 1] = "--[[unaccessible " .. kt .. " key]]"
-			end
-		end
-		return "{ " .. table.concat(parts, ", ") .. " }"
-	elseif t == "function" then
-		return "function(...) return (...) end"
-	else
-		return "nil --[[unserializable " .. t .. "]]"
-	end
-end
-
---- core loop ---
+local present = {}
 
 ---@class Presentation
 ---@field cpu_load Stats<string>?
@@ -138,7 +102,7 @@ end
 ---@field netfaces {[string]: Stats<string>}
 
 ---@type Presentation
-local presentation = {
+present.ation = {
 	cpu_load = nil,
 	ram = nil,
 	swap = nil,
@@ -149,58 +113,50 @@ local presentation = {
 	netfaces = {},
 }
 
-local tick = 0
-while true do
-	if tick % CPU_LOAD_PERIOD_TICKS == 0 then
-		local cpu_load = proccess.cpu_load()
-		presentation.cpu_load = cpu_load and { value = tostring(cpu_load.value), risk = cpu_load.risk }
-	end
-
-	if tick % RAM_SWAP_PERIOD_TICKS == 0 then
-		local ram, swap = proccess.mem()
-		presentation.ram = ram and { value = tostring_si(ram.value, "B"), risk = ram.risk }
-		presentation.swap = swap and { value = tostring_si(swap.value, "B"), risk = swap.risk }
-	end
-
-	if tick % ROOTFS_PERIOD_TICKS == 0 then
-		local rootfs = proccess.rootfs()
-		presentation.fs["/"] = rootfs and { value = tostring_si(rootfs.value, "B"), risk = rootfs.risk }
-	end
-
-	if tick % BATS_PERIOD_TICKS == 0 then
-		local bats, remain_time = proccess.bats()
-		for name, bat in pairs(bats) do
-			presentation.bats[1][name] = {
-				value = string.format("%s%% %+.2f%%/m", bat.value.charge, bat.value.rate * 60),
-				risk = bat.risk,
-			}
-		end
-		presentation.bats.remain_time, presentation.bats.is_charging = tostrign_time(remain_time), remain_time > 0
-	end
-
-	if tick % TEMPS_PERIOD_TICKS == 0 then
-		local temps = proccess.temps()
-		for name, temp in pairs(temps) do
-			presentation.temps[name] = { value = math.ceil(temp.value) .. "°C", risk = temp.risk }
-		end
-	end
-
-	if tick % NETFACES_PERIOD_TICKS then
-		local faces = proccess.netfaces()
-		for name, face in pairs(faces) do
-			presentation.netfaces[name] = {
-				value = tostring_si((face.rx.value + face.tx.value) * 8, "bps"),
-				risk = face.rx.risk * 0.5 + face.tx.risk * 0.5,
-			}
-		end
-	end
-
-	local f = io.open("/dev/shm/statscore.lua", "w")
-	if f then
-		f:write("return " .. serialize(presentation))
-		f:close()
-	end
-
-	posix.sleep(TICK_PERIOD)
-	tick = tick + 1
+function present.cpu()
+	local cpu_load = proccess.cpu_load()
+	present.ation.cpu_load = cpu_load and { value = tostring(cpu_load.value), risk = cpu_load.risk }
 end
+
+function present.mem()
+	local ram, swap = proccess.mem()
+	present.ation.ram = ram and { value = tostring_si(ram.value, "B"), risk = ram.risk }
+	present.ation.swap = swap and { value = tostring_si(swap.value, "B"), risk = swap.risk }
+end
+
+function present.rootfs()
+	local rootfs = proccess.rootfs()
+	present.ation.fs["/"] = rootfs and { value = tostring_si(rootfs.value, "B"), risk = rootfs.risk }
+end
+
+function present.bats()
+	local bats, remain_time = proccess.bats()
+	for name, bat in pairs(bats) do
+		present.ation.bats[1][name] = {
+			value = string.format("%s%% %+.2f%%/m", bat.value.charge, bat.value.rate * 60),
+			risk = bat.risk,
+		}
+	end
+	present.ation.bats.remain_time, present.ation.bats.is_charging = tostrign_time(remain_time), remain_time > 0
+end
+
+function present.temps()
+	local temps = proccess.temps()
+	for name, temp in pairs(temps) do
+		present.ation.temps[name] = { value = math.ceil(temp.value) .. "°C", risk = temp.risk }
+	end
+end
+
+function present.netfaces()
+	local faces = proccess.netfaces()
+	for name, face in pairs(faces) do
+		present.ation.netfaces[name] = {
+			value = tostring_si((face.rx.value + face.tx.value) * 8, "bps"),
+			risk = face.rx.risk * 0.5 + face.tx.risk * 0.5,
+		}
+	end
+end
+
+------
+
+return present

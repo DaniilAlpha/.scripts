@@ -1,0 +1,27 @@
+#!/usr/bin/lua
+
+table.unpack = table.unpack or unpack
+
+---@return Presentation?, string?
+local function load_statscore_safely(path)
+	local func, err = loadfile(path, "t", {})
+	if not func then
+		return nil, "Loading file failed: " .. err
+	end
+
+	-- TODO probably not all cases covered with the sandboxing
+
+	local ok, res = pcall(_VERSION == "Lua 5.1" and setfenv(func, {}) or func)
+	if not ok then
+		return nil, "Executing file failed: " .. tostring(res)
+	end
+
+	return res
+end
+
+local statscore, err = load_statscore_safely("/dev/shm/statscore.lua")
+if not statscore then
+	error(err)
+end
+
+print(statscore[arg[1]])

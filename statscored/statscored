@@ -1,0 +1,80 @@
+#!/usr/bin/lua
+
+table.unpack = table.unpack or unpack
+local posix = require("posix")
+local present = require("present")
+
+local TICK_PERIOD = 4
+local CPU_LOAD_PERIOD_TICKS = 1
+local MEM_PERIOD_TICKS = 1
+local ROOTFS_PERIOD_TICKS = 64
+local TEMPS_PERIOD_TICKS = 8
+local BATS_PERIOD_TICKS = 16
+local NETFACES_PERIOD_TICKS = 2
+
+---@param obj any
+---@return string
+local function serialize(obj)
+	local t = type(obj)
+
+	if t == "number" or t == "boolean" then
+		return tostring(obj)
+	elseif t == "string" then
+		return string.format("%q", obj)
+	elseif t == "table" then
+		local parts = {}
+		for k, v in pairs(obj) do
+			local kt = type(k)
+			---@type string?
+			local k_slzd = nil
+			if kt == "number" or kt == "boolean" then
+				k_slzd = tostring(k)
+			elseif kt == "string" then
+				k_slzd = string.format("%q", k)
+			end
+
+			if k_slzd then
+				local serialized_v = serialize(v)
+				parts[#parts + 1] = "[" .. k_slzd .. "] = " .. serialized_v
+			else
+				parts[#parts + 1] = "--[[unaccessible " .. kt .. " key]]"
+			end
+		end
+		return "{ " .. table.concat(parts, ", ") .. " }"
+	elseif t == "function" then
+		return "function(...) return (...) end"
+	else
+		return "nil --[[unserializable " .. t .. "]]"
+	end
+end
+
+local tick = 0
+while true do
+	if tick % CPU_LOAD_PERIOD_TICKS == 0 then
+		present.cpu()
+	end
+	if tick % MEM_PERIOD_TICKS == 0 then
+		present.mem()
+	end
+	if tick % ROOTFS_PERIOD_TICKS == 0 then
+		present.rootfs()
+	end
+	if tick % BATS_PERIOD_TICKS == 0 then
+		present.bats()
+	end
+	if tick % TEMPS_PERIOD_TICKS == 0 then
+		present.temps()
+	end
+	if tick % NETFACES_PERIOD_TICKS then
+		present.netfaces()
+	end
+
+	local f = io.open("/dev/shm/statscore.lua", "w")
+	if f then
+		f:write("return " .. serialize(present.ation))
+		f:close()
+	end
+
+	posix.sleep(TICK_PERIOD)
+	tick = tick + 1
+end
