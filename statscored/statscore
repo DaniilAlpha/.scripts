@@ -33,7 +33,6 @@ if not statscore then
 end
 
 for part in PATH:gmatch("[.]?([^.]+)") do
-	print(part)
 	statscore = (statscore or {})[part]
 end
 print(statscore)
