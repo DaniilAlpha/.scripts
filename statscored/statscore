@@ -2,16 +2,24 @@
 
 table.unpack = table.unpack or unpack
 
+local PATH = arg[1] or ""
+
 ---@return Presentation?, string?
 local function load_statscore_safely(path)
-	local func, err = loadfile(path, "t", {})
-	if not func then
+	local env = {}
+
+	local get_statscore, err
+	if setfenv then
+		get_statscore, err = loadfile(path)
+		get_statscore = get_statscore and setfenv(get_statscore, env)
+	else
+		get_statscore, err = loadfile(path, "t", env)
+	end
+	if not get_statscore then
 		return nil, "Loading file failed: " .. err
 	end
 
-	-- TODO probably not all cases covered with the sandboxing
-
-	local ok, res = pcall(_VERSION == "Lua 5.1" and setfenv(func, {}) or func)
+	local ok, res = pcall(get_statscore)
 	if not ok then
 		return nil, "Executing file failed: " .. tostring(res)
 	end
@@ -24,4 +32,8 @@ if not statscore then
 	error(err)
 end
 
-print(statscore[arg[1]])
+for part in PATH:gmatch("[.]?([^.]+)") do
+	print(part)
+	statscore = (statscore or {})[part]
+end
+print(statscore)
