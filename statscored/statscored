@@ -12,6 +12,8 @@ local TEMPS_PERIOD_TICKS = 8
 local BATS_PERIOD_TICKS = 16
 local NETFACES_PERIOD_TICKS = 2
 
+local STATSCORE_PATH = "/dev/shm/statscore.lua"
+
 ---@param obj any
 ---@return string
 local function serialize(obj)
@@ -28,14 +30,18 @@ local function serialize(obj)
 			---@type string?
 			local k_slzd = nil
 			if kt == "number" or kt == "boolean" then
-				k_slzd = tostring(k)
+				k_slzd = "[" .. tostring(k) .. "]"
 			elseif kt == "string" then
-				k_slzd = string.format("%q", k)
+				if k:match("^[%w_][%w_%d]*$") then
+					k_slzd = k
+				else
+					k_slzd = string.format("[%q]", k)
+				end
 			end
 
 			if k_slzd then
 				local serialized_v = serialize(v)
-				parts[#parts + 1] = "[" .. k_slzd .. "] = " .. serialized_v
+				parts[#parts + 1] = k_slzd .. " = " .. serialized_v
 			else
 				parts[#parts + 1] = "--[[unaccessible " .. kt .. " key]]"
 			end
@@ -48,28 +54,25 @@ local function serialize(obj)
 	end
 end
 
+---@type {fn: function, period: integer}[]
+local score_sources = {
+	{ fn = present.cpu, period = CPU_LOAD_PERIOD_TICKS },
+	{ fn = present.mem, period = MEM_PERIOD_TICKS },
+	{ fn = present.rootfs, period = ROOTFS_PERIOD_TICKS },
+	{ fn = present.bats, period = BATS_PERIOD_TICKS },
+	{ fn = present.temps, period = TEMPS_PERIOD_TICKS },
+	{ fn = present.netfaces, period = NETFACES_PERIOD_TICKS },
+}
+
 local tick = 0
 while true do
-	if tick % CPU_LOAD_PERIOD_TICKS == 0 then
-		present.cpu()
-	end
-	if tick % MEM_PERIOD_TICKS == 0 then
-		present.mem()
-	end
-	if tick % ROOTFS_PERIOD_TICKS == 0 then
-		present.rootfs()
-	end
-	if tick % BATS_PERIOD_TICKS == 0 then
-		present.bats()
-	end
-	if tick % TEMPS_PERIOD_TICKS == 0 then
-		present.temps()
-	end
-	if tick % NETFACES_PERIOD_TICKS then
-		present.netfaces()
+	for _, score_source in ipairs(score_sources) do
+		if tick % score_source.period == 0 then
+			score_source.fn()
+		end
 	end
 
-	local f = io.open("/dev/shm/statscore.lua", "w")
+	local f = io.open(STATSCORE_PATH, "w")
 	if f then
 		f:write("return " .. serialize(present.ation))
 		f:close()

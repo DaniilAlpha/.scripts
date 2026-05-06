@@ -1,5 +1,10 @@
 local proccess = require("proccess")
 
+---@class NamedStats<T>
+---@field name string - A name for the stats.
+---@field value T - A core value for the stats.
+---@field risk number - A number greater than `0`, where `0` indicates a full health, and `1+` is bad or dangerous.
+
 --- formatters ---
 
 ---@param size number
@@ -97,9 +102,9 @@ local present = {}
 ---@field ram Stats<string>?
 ---@field swap Stats<string>?
 ---@field fs {["/"]: Stats<string>?}
----@field bats {[1]: {[string]: Stats<string>}, remain_time: string?, is_charging: boolean?}
----@field temps {[string]: Stats<string>}
----@field netfaces {[string]: Stats<string>}
+---@field bats {[1]: NamedStats<string>[], remain_time: string?, is_charging: boolean?}
+---@field temps NamedStats<string>[]
+---@field netfaces NamedStats<string>[]
 
 ---@type Presentation
 present.ation = {
@@ -112,6 +117,14 @@ present.ation = {
 	temps = {},
 	netfaces = {},
 }
+
+---@generic T
+---@param a Stats<T>
+---@param b Stats<T>
+---@return boolean
+local function greater_risk(a, b)
+	return a.risk > b.risk
+end
 
 function present.cpu()
 	local cpu_load = proccess.cpu_load()
@@ -131,30 +144,54 @@ end
 
 function present.bats()
 	local bats, remain_time = proccess.bats()
+
+	---@type NamedStats<string>[]
+	local presentation_bats = {}
 	for name, bat in pairs(bats) do
-		present.ation.bats[1][name] = {
+		presentation_bats[#presentation_bats + 1] = {
+			name = name,
 			value = string.format("%s%% %+.2f%%/m", bat.value.charge, bat.value.rate * 60),
 			risk = bat.risk,
 		}
 	end
+	table.sort(presentation_bats, greater_risk)
+
+	present.ation.bats[1] = presentation_bats
 	present.ation.bats.remain_time, present.ation.bats.is_charging = tostrign_time(remain_time), remain_time > 0
 end
 
 function present.temps()
 	local temps = proccess.temps()
+
+	---@type NamedStats<string>[]
+	local presentation_temps = {}
 	for name, temp in pairs(temps) do
-		present.ation.temps[name] = { value = math.ceil(temp.value) .. "°C", risk = temp.risk }
+		presentation_temps[#presentation_temps + 1] = {
+			name = name,
+			value = math.ceil(temp.value) .. "°C",
+			risk = temp.risk,
+		}
 	end
+	table.sort(presentation_temps, greater_risk)
+
+	present.ation.temps = presentation_temps
 end
 
 function present.netfaces()
 	local faces = proccess.netfaces()
+
+	---@type NamedStats<string>[]
+	local presentation_netfaces = {}
 	for name, face in pairs(faces) do
-		present.ation.netfaces[name] = {
+		presentation_netfaces[#presentation_netfaces + 1] = {
+			name = name,
 			value = tostring_si((face.rx.value + face.tx.value) * 8, "bps"),
 			risk = face.rx.risk * 0.5 + face.tx.risk * 0.5,
 		}
 	end
+	table.sort(presentation_netfaces, greater_risk)
+
+	present.ation.netfaces = presentation_netfaces
 end
 
 ------
