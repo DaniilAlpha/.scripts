@@ -33,6 +33,7 @@ if not statscore then
 end
 
 for part in PATH:gmatch("[.]?([^.]+)") do
-	statscore = (statscore or {})[part]
+	statscore = statscore or {}
+	statscore = statscore[tonumber(part)] or statscore[part]
 end
 print(statscore)
