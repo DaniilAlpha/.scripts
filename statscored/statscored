@@ -4,6 +4,8 @@ table.unpack = table.unpack or unpack
 local posix = require("posix")
 local present = require("present")
 
+local STATSCORE_PATH = "/dev/shm/statscore.lua"
+
 local TICK_PERIOD = 4
 local CPU_LOAD_PERIOD_TICKS = 1
 local MEM_PERIOD_TICKS = 1
@@ -11,8 +13,6 @@ local ROOTFS_PERIOD_TICKS = 64
 local TEMPS_PERIOD_TICKS = 8
 local BATS_PERIOD_TICKS = 16
 local NETFACES_PERIOD_TICKS = 2
-
-local STATSCORE_PATH = "/dev/shm/statscore.lua"
 
 ---@param obj any
 ---@return string
