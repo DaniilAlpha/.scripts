@@ -20,7 +20,11 @@ local function serialize(obj)
 	local t = type(obj)
 
 	if t == "number" or t == "boolean" then
-		return tostring(obj)
+		if obj ~= obj then
+			return "(0/0)"
+		else
+			return tostring(obj)
+		end
 	elseif t == "string" then
 		return string.format("%q", obj)
 	elseif t == "table" then

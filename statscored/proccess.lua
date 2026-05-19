@@ -43,12 +43,20 @@ proccess.bats = (function()
 	local last_time, bat_histories = 0, {}
 
 	---@alias BatStats Stats<{charge: integer, rate: number}>
-	---@return {[string]: BatStats}, number
+	---@return BatStats, {[string]: BatStats}, number
 	return function()
 		local time, bats = realtime(), collect.bats()
 
+		local function bat_charge_and_rate_to_stats(charge, rate)
+			return {
+				value = { charge = charge, rate = rate },
+				risk = (1 - charge / 100) * CHARGE_RISK
+					+ (rate < 0 and (charge / -rate) or 0) / CRITICAL_TIME * TIME_RISK,
+			}
+		end
+
 		---@type {[string]: BatStats}
-		local stats = {}
+		local individual_stats = {}
 		for name, bat in pairs(bats) do
 			local history = bat_histories[name] or { last = bat, rates = {} }
 			history.last = bat
@@ -65,22 +73,25 @@ proccess.bats = (function()
 				end
 			end
 
-			stats[name] = {
-				value = { charge = bat, rate = rate },
-				risk = (1 - bat / 100) * CHARGE_RISK + (rate < 0 and (bat / -rate) or 0) / CRITICAL_TIME * TIME_RISK,
-			}
+			individual_stats[name] = bat_charge_and_rate_to_stats(bat, rate)
 		end
 
 		local total_charge, total_rate = 0, 0
-		for _, bat in pairs(stats) do
+		for _, bat in pairs(individual_stats) do
 			total_charge = total_charge + bat.value.charge
 			total_rate = total_rate + bat.value.rate
 		end
-		local total_remain_time = (total_rate >= 0 and (#stats * 100 - total_charge) or total_charge) / total_rate
+
+		---@type BatStats
+		local combo_stats =
+			bat_charge_and_rate_to_stats(total_charge / #individual_stats, total_rate / #individual_stats)
+
+		local total_remain_time = (total_rate >= 0 and (#individual_stats * 100 - total_charge) or total_charge)
+			/ total_rate
 
 		last_time = time
 
-		return stats, total_remain_time
+		return combo_stats, individual_stats, total_remain_time
 	end
 end)()
 
@@ -90,8 +101,7 @@ proccess.netfaces = (function()
 	---@type number, {[string]: NetfaceInfo}
 	local last_time, last_faces = 0, {}
 
-	---@alias NetfaceStats {rx: Stats<number>, tx: Stats<number>}
-	---@return {[string]: NetfaceStats}
+	---@return Stats<number>, {[string]: Stats<number>}
 	return function()
 		local time, faces = realtime(), collect.netfaces()
 
@@ -109,23 +119,32 @@ proccess.netfaces = (function()
 			}
 		end
 
-		---@type {[string]: NetfaceStats}
-		local stats = {}
+		---@type {[string]: Stats<number>}
+		local individual_stats = {}
 		for name, face in pairs(faces) do
 			local last_face = last_faces[name]
-			stats[name] = {
-				rx = netface_dir_info_to_stats(face.rx, last_face and last_face.rx),
-				tx = netface_dir_info_to_stats(face.tx, last_face and last_face.tx),
+			local rx = netface_dir_info_to_stats(face.rx, last_face and last_face.rx)
+			local tx = netface_dir_info_to_stats(face.tx, last_face and last_face.tx)
+			individual_stats[name] = {
+				value = rx.value + tx.value,
+				risk = rx.risk * 0.5 + tx.risk * 0.5,
 			}
+		end
+
+		---@type Stats<number>
+		local combo_stats = { value = 0, risk = 0 }
+		for _, face in pairs(individual_stats) do
+			combo_stats.value = combo_stats.value + face.value
+			combo_stats.risk = combo_stats.risk + face.risk
 		end
 
 		last_time, last_faces = time, faces
 
-		return stats
+		return combo_stats, individual_stats
 	end
 end)()
 
----@return {[string]: Stats<number>}
+---@return Stats<number>, {[string]: Stats<number>}
 function proccess.temps()
 	local THERMAL_ZONE_MAX_TEMP, BAT_MAX_TEMP = 90, 45
 	local BEST_TEMP, SANE_TEMP = 20, 30
@@ -134,7 +153,7 @@ function proccess.temps()
 	local bats_temps = collect.bats_temps()
 
 	---@type {[string]: Stats<number>}
-	local stats = {}
+	local individual_stats = {}
 	for name, thermal_zone in pairs(thermal_zones) do
 		local max_temp_mc = thermal_zone.trip_points_mc["critical"]
 			or thermal_zone.trip_points_mc["hot"]
@@ -144,7 +163,7 @@ function proccess.temps()
 		local max_temp = max_temp_mc and (max_temp_mc / 1000) or THERMAL_ZONE_MAX_TEMP
 		max_temp = max_temp >= SANE_TEMP and max_temp or THERMAL_ZONE_MAX_TEMP
 
-		stats[name] = {
+		individual_stats[name] = {
 			value = temp,
 			risk = math.abs(temp - BEST_TEMP) / (max_temp - BEST_TEMP),
 		}
@@ -154,13 +173,21 @@ function proccess.temps()
 		local max_temp = bat_temp.temp_max_mc and (bat_temp.temp_max_mc / 1000) or BAT_MAX_TEMP
 		-- max_temp = max_temp >= SANE_TEMP and max_temp or BAT_MAX_TEMP
 
-		stats[name] = {
+		individual_stats[name] = {
 			value = temp,
 			risk = math.abs(temp - BEST_TEMP) / (max_temp - BEST_TEMP),
 		}
 	end
 
-	return stats
+	---@type Stats<number>
+	local combo_stats = { value = BEST_TEMP, risk = 0 }
+	for _, temp in pairs(individual_stats) do
+		if temp.risk > combo_stats.risk then
+			combo_stats = temp
+		end
+	end
+
+	return combo_stats, individual_stats
 end
 
 ------

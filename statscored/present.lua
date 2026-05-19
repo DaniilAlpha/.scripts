@@ -97,14 +97,28 @@ end
 
 local present = {}
 
+---@class BatsPresentation
+---@field combo Stats<string>?
+---@field is_charging boolean?
+---@field remain_time string?
+---@field [number] NamedStats<string>
+
+---@class NetfacesPresentation
+---@field combo Stats<string>?
+---@field [number] NamedStats<string>
+
+---@class TempsPresentation
+---@field combo Stats<string>?
+---@field [number] NamedStats<string>
+
 ---@class Presentation
 ---@field cpu_load Stats<string>?
 ---@field ram Stats<string>?
 ---@field swap Stats<string>?
 ---@field fs {["/"]: Stats<string>?}
----@field bats {[1]: NamedStats<string>[], remain_time: string?, is_charging: boolean?}
----@field temps NamedStats<string>[]
----@field netfaces NamedStats<string>[]
+---@field bats BatsPresentation
+---@field netfaces NetfacesPresentation
+---@field temps TempsPresentation
 
 ---@type Presentation
 present.ation = {
@@ -112,10 +126,9 @@ present.ation = {
 	ram = nil,
 	swap = nil,
 	fs = { ["/"] = nil },
-	bats = { {}, remain_time = nil, is_charging = nil },
-	remain_time = nil,
-	temps = {},
-	netfaces = {},
+	bats = { combo = nil, remain_time = nil, is_charging = nil },
+	netfaces = { combo = nil },
+	temps = { combo = nil },
 }
 
 ---@generic T
@@ -143,7 +156,7 @@ function present.rootfs()
 end
 
 function present.bats()
-	local bats, remain_time = proccess.bats()
+	local combo, bats, remain_time = proccess.bats()
 
 	---@type NamedStats<string>[]
 	local presentation_bats = {}
@@ -156,12 +169,37 @@ function present.bats()
 	end
 	table.sort(presentation_bats, greater_risk)
 
-	present.ation.bats[1] = presentation_bats
-	present.ation.bats.remain_time, present.ation.bats.is_charging = tostrign_time(remain_time), remain_time > 0
+	present.ation.bats = presentation_bats
+	present.ation.bats.combo = {
+		value = string.format("%s%% %+.2f%%/m", combo.value.charge, combo.value.rate * 60),
+		risk = combo.risk,
+	}
+	present.ation.bats.is_charging, present.ation.bats.remain_time = remain_time > 0, tostrign_time(remain_time)
+end
+
+function present.netfaces()
+	local combo, faces = proccess.netfaces()
+
+	---@type NamedStats<string>[]
+	local presentation_netfaces = {}
+	for name, face in pairs(faces) do
+		presentation_netfaces[#presentation_netfaces + 1] = {
+			name = name,
+			value = tostring_si(face.value * 8, "bps"),
+			risk = face.risk,
+		}
+	end
+	table.sort(presentation_netfaces, greater_risk)
+
+	present.ation.netfaces = presentation_netfaces
+	present.ation.netfaces.combo = {
+		value = tostring_si(combo.value * 8, "bps"),
+		risk = combo.risk,
+	}
 end
 
 function present.temps()
-	local temps = proccess.temps()
+	local combo, temps = proccess.temps()
 
 	---@type NamedStats<string>[]
 	local presentation_temps = {}
@@ -175,23 +213,10 @@ function present.temps()
 	table.sort(presentation_temps, greater_risk)
 
 	present.ation.temps = presentation_temps
-end
-
-function present.netfaces()
-	local faces = proccess.netfaces()
-
-	---@type NamedStats<string>[]
-	local presentation_netfaces = {}
-	for name, face in pairs(faces) do
-		presentation_netfaces[#presentation_netfaces + 1] = {
-			name = name,
-			value = tostring_si((face.rx.value + face.tx.value) * 8, "bps"),
-			risk = face.rx.risk * 0.5 + face.tx.risk * 0.5,
-		}
-	end
-	table.sort(presentation_netfaces, greater_risk)
-
-	present.ation.netfaces = presentation_netfaces
+	present.ation.temps.combo = {
+		value = math.ceil(combo.value) .. "°C",
+		risk = combo.risk,
+	}
 end
 
 ------
