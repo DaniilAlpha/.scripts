@@ -144,7 +144,7 @@ proccess.netfaces = (function()
 	end
 end)()
 
----@return Stats<number>, {[string]: Stats<number>}
+---@return {[string]: Stats<number>}
 function proccess.temps()
 	local THERMAL_ZONE_MAX_TEMP, BAT_MAX_TEMP = 90, 45
 	local BEST_TEMP, SANE_TEMP = 20, 30
@@ -179,15 +179,7 @@ function proccess.temps()
 		}
 	end
 
-	---@type Stats<number>
-	local combo_stats = { value = BEST_TEMP, risk = 0 }
-	for _, temp in pairs(individual_stats) do
-		if temp.risk > combo_stats.risk then
-			combo_stats = temp
-		end
-	end
-
-	return combo_stats, individual_stats
+	return individual_stats
 end
 
 ------

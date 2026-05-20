@@ -107,10 +107,6 @@ local present = {}
 ---@field combo Stats<string>?
 ---@field [number] NamedStats<string>
 
----@class TempsPresentation
----@field combo Stats<string>?
----@field [number] NamedStats<string>
-
 ---@class Presentation
 ---@field cpu_load Stats<string>?
 ---@field ram Stats<string>?
@@ -118,7 +114,7 @@ local present = {}
 ---@field fs {["/"]: Stats<string>?}
 ---@field bats BatsPresentation
 ---@field netfaces NetfacesPresentation
----@field temps TempsPresentation
+---@field temps NamedStats<string>[]
 
 ---@type Presentation
 present.ation = {
@@ -199,7 +195,7 @@ function present.netfaces()
 end
 
 function present.temps()
-	local combo, temps = proccess.temps()
+	local temps = proccess.temps()
 
 	---@type NamedStats<string>[]
 	local presentation_temps = {}
@@ -213,10 +209,6 @@ function present.temps()
 	table.sort(presentation_temps, greater_risk)
 
 	present.ation.temps = presentation_temps
-	present.ation.temps.combo = {
-		value = math.ceil(combo.value) .. "°C",
-		risk = combo.risk,
-	}
 end
 
 ------
