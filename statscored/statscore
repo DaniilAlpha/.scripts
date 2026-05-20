@@ -36,4 +36,6 @@ for part in PATH:gmatch("[.]?([^.]+)") do
 	statscore = statscore or {}
 	statscore = statscore[tonumber(part)] or statscore[part]
 end
-print(statscore)
+if statscore ~= nil then
+	print(statscore)
+end
