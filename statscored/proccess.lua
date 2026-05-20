@@ -36,7 +36,7 @@ end
 proccess.bats = (function()
 	local CHANGE_COUNT_STABLE, CHANGE_COUNT_MAX = 4, 20
 	local CRITICAL_TIME = 10 * 60
-	local CHARGE_RISK, TIME_RISK = 0.5, 0.5
+	local CHARGE_RISK, TIME_RISK = 1.0, 0.0
 
 	---@alias BatHistory {last: BatInfo, rates: number[]}
 	---@type number, {[string]: BatHistory}
@@ -59,8 +59,8 @@ proccess.bats = (function()
 		local individual_stats = {}
 		for name, bat in pairs(bats) do
 			local history = bat_histories[name] or { last = bat, rates = {} }
-			history.last = bat
 			history.rates[#history.rates + 1] = (bat - history.last) / (time - last_time)
+			history.last = bat
 			if #history.rates >= CHANGE_COUNT_MAX then
 				table.remove(history.rates, 1)
 			end
@@ -77,16 +77,18 @@ proccess.bats = (function()
 		end
 
 		local total_charge, total_rate = 0, 0
+		local individual_stats_count = 0
 		for _, bat in pairs(individual_stats) do
 			total_charge = total_charge + bat.value.charge
 			total_rate = total_rate + bat.value.rate
+			individual_stats_count = individual_stats_count + 1
 		end
 
 		---@type BatStats
 		local combo_stats =
-			bat_charge_and_rate_to_stats(total_charge / #individual_stats, total_rate / #individual_stats)
+			bat_charge_and_rate_to_stats(total_charge / individual_stats_count, total_rate / individual_stats_count)
 
-		local total_remain_time = (total_rate >= 0 and (#individual_stats * 100 - total_charge) or total_charge)
+		local total_remain_time = (total_rate >= 0 and (individual_stats_count * 100 - total_charge) or total_charge)
 			/ total_rate
 
 		last_time = time

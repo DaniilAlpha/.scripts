@@ -137,7 +137,7 @@ end
 
 function present.cpu()
 	local cpu_load = proccess.cpu_load()
-	present.ation.cpu_load = cpu_load and { value = tostring(cpu_load.value), risk = cpu_load.risk }
+	present.ation.cpu_load = cpu_load and { value = string.format("%3.2f", cpu_load.value), risk = cpu_load.risk }
 end
 
 function present.mem()
@@ -159,7 +159,7 @@ function present.bats()
 	for name, bat in pairs(bats) do
 		presentation_bats[#presentation_bats + 1] = {
 			name = name,
-			value = string.format("%s%% %+.2f%%/m", bat.value.charge, bat.value.rate * 60),
+			value = string.format("%i%% %+.2f%%/m", bat.value.charge, bat.value.rate * 60),
 			risk = bat.risk,
 		}
 	end
@@ -167,7 +167,7 @@ function present.bats()
 
 	present.ation.bats = presentation_bats
 	present.ation.bats.combo = {
-		value = string.format("%s%% %+.2f%%/m", combo.value.charge, combo.value.rate * 60),
+		value = string.format("%i%% %+.2f%%/m", combo.value.charge, combo.value.rate * 60),
 		risk = combo.risk,
 	}
 	present.ation.bats.is_charging, present.ation.bats.remain_time = remain_time > 0, tostrign_time(remain_time)
