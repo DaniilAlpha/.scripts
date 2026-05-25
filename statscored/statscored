@@ -14,53 +14,63 @@ local TEMPS_PERIOD_TICKS = 8
 local BATS_PERIOD_TICKS = 16
 local NETFACES_PERIOD_TICKS = 2
 
+---------------------
+--- serialization ---
+---------------------
+
+---@param n number|boolean
+local function serialize_number_or_boolean(n)
+	return n ~= n and "(0/0)" or -math.huge >= n and "(1/0)" or n >= math.huge and "(-1/0)" or tostring(n)
+end
+
+---@param s string
+local function serialize_string(s)
+	return string.format("%q", s)
+end
+
 ---@param obj any
 ---@return string
 local function serialize(obj)
 	local t = type(obj)
 
 	if t == "number" or t == "boolean" then
-		if obj ~= obj then
-			return "(0/0)"
-		elseif obj == 1 / 0 then
-			return "(1/0)"
-		elseif obj == -1 / 0 then
-			return "(-1/0)"
-		else
-			return tostring(obj)
-		end
+		return serialize_number_or_boolean(obj)
 	elseif t == "string" then
-		return string.format("%q", obj)
+		return serialize_string(obj)
 	elseif t == "table" then
-		local parts = {}
+		local pairs_slzd = {}
 		for k, v in pairs(obj) do
 			local kt = type(k)
+
 			---@type string?
 			local k_slzd = nil
-			if kt == "number" or kt == "boolean" then
-				k_slzd = "[" .. tostring(k) .. "]"
-			elseif kt == "string" then
-				if k:match("^[%w_][%w_%d]*$") then
-					k_slzd = k
-				else
-					k_slzd = string.format("[%q]", k)
+			if kt == "string" and k:match("^[%w_][%w_%d]*$") then
+				k_slzd = k
+			else
+				if kt == "number" or kt == "boolean" then
+					k_slzd = serialize_number_or_boolean(k)
+				elseif kt == "string" then
+					k_slzd = serialize_string(k)
 				end
+				k_slzd = k_slzd and "[" .. k_slzd .. "]"
 			end
 
-			if k_slzd then
-				local serialized_v = serialize(v)
-				parts[#parts + 1] = k_slzd .. " = " .. serialized_v
-			else
-				parts[#parts + 1] = "--[[unaccessible " .. kt .. " key]]"
-			end
+			pairs_slzd[#pairs_slzd + 1] = k_slzd and (k_slzd .. " = " .. serialize(v))
+				or "--[[inaccessible " .. kt .. " key]]"
 		end
-		return "{ " .. table.concat(parts, ", ") .. " }"
+		return "{ " .. table.concat(pairs_slzd, ", ") .. " }"
 	elseif t == "function" then
-		return "function(...) return (...) end"
+		return "function(...) end"
+	elseif t == "nil" then
+		return "nil"
 	else
 		return "nil --[[unserializable " .. t .. "]]"
 	end
 end
+
+------------
+--- main ---
+------------
 
 ---@type {fn: function, period: integer}[]
 local score_sources = {

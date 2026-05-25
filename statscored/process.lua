@@ -10,30 +10,32 @@ local function realtime()
 	return sec + nsec / 1000000000
 end
 
+-------------------
 --- proccessing ---
+-------------------
 
-local proccess = {}
+local process = {}
 
 ---@return Stats<number>?
-function proccess.cpu_load()
+function process.cpu_load()
 	local cpu_load = collect.cpu_load()
 	return cpu_load and { value = cpu_load, risk = cpu_load / collect.CPU_COUNT }
 end
 
 ---@return Stats<integer>?, Stats<integer>?
-function proccess.mem()
+function process.mem()
 	local ram, swap = collect.mem()
 	return ram and { value = ram.used_kb * 1024, risk = ram.used_kb / ram.total_kb },
 		swap and { value = swap.used_kb * 1024, risk = swap.used_kb / swap.total_kb }
 end
 
 ---@return Stats<integer>?
-function proccess.rootfs()
+function process.rootfs()
 	local rootfs = collect.rootfs()
 	return rootfs and { value = rootfs.free, risk = 1 - rootfs.free / rootfs.total }
 end
 
-proccess.bats = (function()
+process.bats = (function()
 	local CHANGE_COUNT_STABLE, CHANGE_COUNT_MAX = 4, 20
 	local CRITICAL_TIME = 10 * 60
 	local CHARGE_RISK, TIME_RISK = 1.0, 0.0
@@ -43,10 +45,12 @@ proccess.bats = (function()
 	local last_time, bat_histories = 0, {}
 
 	---@alias BatStats Stats<{charge: integer, rate: number}>
-	---@return BatStats, {[string]: BatStats}, number
+	---@return BatStats, {[string]: BatStats}
 	return function()
 		local time, bats = realtime(), collect.bats()
 
+		---@param charge integer
+		---@param rate number
 		local function bat_charge_and_rate_to_stats(charge, rate)
 			return {
 				value = { charge = charge, rate = rate },
@@ -60,10 +64,10 @@ proccess.bats = (function()
 		for name, bat in pairs(bats) do
 			local history = bat_histories[name] or { last = bat, rates = {} }
 			history.rates[#history.rates + 1] = (bat - history.last) / (time - last_time)
-			history.last = bat
 			if #history.rates >= CHANGE_COUNT_MAX then
 				table.remove(history.rates, 1)
 			end
+			history.last = bat
 			bat_histories[name] = history
 
 			local rate = 0
@@ -85,25 +89,24 @@ proccess.bats = (function()
 		end
 
 		---@type BatStats
-		local combo_stats =
-			bat_charge_and_rate_to_stats(total_charge / individual_stats_count, total_rate / individual_stats_count)
-
-		local total_remain_time = (total_rate >= 0 and (individual_stats_count * 100 - total_charge) or total_charge)
-			/ total_rate
+		local combo_stats = bat_charge_and_rate_to_stats(
+			math.floor(total_charge / individual_stats_count),
+			total_rate / individual_stats_count
+		)
 
 		last_time = time
 
-		return combo_stats, individual_stats, total_remain_time
+		return combo_stats, individual_stats
 	end
 end)()
 
-proccess.netfaces = (function()
+process.netfaces = (function()
 	local ERROR_RISK, DROPPED_RISK = 0.5, 0.1
 
 	---@type number, {[string]: NetfaceInfo}
 	local last_time, last_faces = 0, {}
 
-	---@return Stats<number>, {[string]: Stats<number>}
+	---@return {[string]: Stats<number>}
 	return function()
 		local time, faces = realtime(), collect.netfaces()
 
@@ -133,21 +136,14 @@ proccess.netfaces = (function()
 			}
 		end
 
-		---@type Stats<number>
-		local combo_stats = { value = 0, risk = 0 }
-		for _, face in pairs(individual_stats) do
-			combo_stats.value = combo_stats.value + face.value
-			combo_stats.risk = combo_stats.risk + face.risk
-		end
-
 		last_time, last_faces = time, faces
 
-		return combo_stats, individual_stats
+		return individual_stats
 	end
 end)()
 
 ---@return {[string]: Stats<number>}
-function proccess.temps()
+function process.temps()
 	local THERMAL_ZONE_MAX_TEMP, BAT_MAX_TEMP = 90, 45
 	local BEST_TEMP, SANE_TEMP = 20, 30
 
@@ -186,4 +182,4 @@ end
 
 ------
 
-return proccess
+return process

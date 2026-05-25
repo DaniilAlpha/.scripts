@@ -17,7 +17,9 @@ local function read(path, whats)
 	return table.unpack(result)
 end
 
+------------------
 --- collection ---
+------------------
 
 local collect = {}
 
