@@ -4,15 +4,18 @@ table.unpack = table.unpack or unpack
 local posix = require("posix")
 local present = require("present")
 
-local STATSCORE_PATH = "/dev/shm/statscore.lua"
-
-local TICK_PERIOD = 4
-local CPU_LOAD_PERIOD_TICKS = 1
-local MEM_PERIOD_TICKS = 1
-local ROOTFS_PERIOD_TICKS = 64
-local TEMPS_PERIOD_TICKS = 8
-local BATS_PERIOD_TICKS = 16
-local NETFACES_PERIOD_TICKS = 2
+---@param t table?
+---@param ... any
+function table.get_in(t, ...)
+	for _, key in pairs({ ... }) do
+		if t ~= nil then
+			t = t[key]
+		else
+			break
+		end
+	end
+	return t
+end
 
 ---------------------
 --- serialization ---
@@ -72,14 +75,78 @@ end
 --- main ---
 ------------
 
+---@class TickMultipliersConfig
+---@field cpu_load integer
+---@field mem integer
+---@field fs integer
+---@field bats integer
+---@field temps integer
+---@field netfaces integer
+
+---@class Config
+---@field out_path string
+---@field tick_period integer
+---@field tick_multipliers TickMultipliersConfig
+
+---@return Config?, string?
+local function load_config()
+	local PATHS = {
+		os.getenv("STATSCORED_CONFIG") or ((os.getenv("HOME") or "~") .. "/.config/statscored.lua"),
+		"/etc/statscored.lua",
+	}
+
+	---@type function?
+	local get
+	for _, path in pairs(PATHS) do
+		if path then
+			local env = {}
+
+			get = loadfile(path, "t", env)
+			if setfenv then
+				get = get and setfenv(get, env)
+			end
+
+			if get then
+				break
+			end
+		end
+	end
+
+	---@type table?
+	local res
+	if get then
+		local ok
+		ok, res = pcall(get)
+		res = ok and res or nil
+	end
+
+	return {
+		out_path = table.get_in(res, "out_path") or (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/statscore.lua",
+		tick_period = table.get_in(res, "tick_period") or 4,
+		tick_multipliers = {
+			cpu_load = table.get_in(res, "tick_multipliers", "cpu_load") or 2,
+			mem = table.get_in(res, "tick_multipliers", "mem") or 2,
+			fs = table.get_in(res, "tick_multipliers", "fs") or 64,
+			bats = table.get_in(res, "tick_multipliers", "bats") or 16,
+			temps = table.get_in(res, "tick_multipliers", "temps") or 4,
+			netfaces = table.get_in(res, "tick_multipliers", "netfaces") or 1,
+		},
+	}
+end
+
+local config, err = load_config()
+if not config then
+	error("config loading failed: " .. err)
+end
+
 ---@type {fn: function, period: integer}[]
 local score_sources = {
-	{ fn = present.cpu, period = CPU_LOAD_PERIOD_TICKS },
-	{ fn = present.mem, period = MEM_PERIOD_TICKS },
-	{ fn = present.rootfs, period = ROOTFS_PERIOD_TICKS },
-	{ fn = present.bats, period = BATS_PERIOD_TICKS },
-	{ fn = present.temps, period = TEMPS_PERIOD_TICKS },
-	{ fn = present.netfaces, period = NETFACES_PERIOD_TICKS },
+	{ fn = present.cpu_load, period = config.tick_multipliers.cpu_load },
+	{ fn = present.mem, period = config.tick_multipliers.mem },
+	{ fn = present.fs, period = config.tick_multipliers.fs },
+	{ fn = present.bats, period = config.tick_multipliers.bats },
+	{ fn = present.temps, period = config.tick_multipliers.temps },
+	{ fn = present.netfaces, period = config.tick_multipliers.netfaces },
 }
 
 local tick = 0
@@ -90,12 +157,14 @@ while true do
 		end
 	end
 
-	local f = io.open(STATSCORE_PATH, "w")
+	local f = io.open(config.out_path .. ".tmp", "w")
 	if f then
 		f:write("return " .. serialize(present.ation))
 		f:close()
+
+		os.rename(config.out_path .. ".tmp", config.out_path)
 	end
 
-	posix.sleep(TICK_PERIOD)
 	tick = tick + 1
+	posix.sleep(config.tick_period)
 end

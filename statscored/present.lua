@@ -13,8 +13,8 @@ local present = {}
 ---@field fs {["/"]: Stats<integer>?}
 ---@field bat BatStats?
 ---@field bats {[string]: BatStats}
----@field netfaces {[string]: Stats<number>}
 ---@field temps {[string]: Stats<number>}
+---@field netfaces {[string]: Stats<number>}
 
 ---@type Presentation
 present.ation = {
@@ -28,7 +28,7 @@ present.ation = {
 	temps = {},
 }
 
-function present.cpu()
+function present.cpu_load()
 	present.ation.cpu_load = process.cpu_load()
 end
 
@@ -36,7 +36,7 @@ function present.mem()
 	present.ation.ram, present.ation.swap = process.mem()
 end
 
-function present.rootfs()
+function present.fs()
 	present.ation.fs["/"] = process.rootfs()
 end
 
