@@ -72,7 +72,7 @@ process.bats = (function()
 
 			local rate = 0
 			if #history.rates >= CHANGE_COUNT_STABLE then
-				for _, v in ipairs(history.rates) do
+				for _, v in pairs(history.rates) do
 					rate = rate + v / #history.rates
 				end
 			end
