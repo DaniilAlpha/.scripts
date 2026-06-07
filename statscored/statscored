@@ -3,6 +3,7 @@
 table.unpack = table.unpack or unpack
 local posix = require("posix")
 local socket = require("posix.sys.socket")
+local signal = require("posix.signal")
 
 local present = require("present")
 
@@ -100,7 +101,7 @@ end
 ---@field netfaces integer
 
 ---@class Config
----@field tick_period integer
+---@field tick_period number
 ---@field tick_multipliers TickMultipliersConfig
 
 ---@param paths string[]
@@ -160,25 +161,23 @@ local score_sources = {
 	{ fn = present.netfaces, period = config.tick_multipliers.netfaces },
 }
 
+-- to make writing to broken pipe just report an error instead of crashing
+signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+
 os.remove(SOCKET_PATH)
 local server_fd = assert(socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, 0))
 assert(socket.bind(server_fd, { family = socket.AF_UNIX, path = SOCKET_PATH }))
-
-local client_fds = {}
 assert(socket.listen(server_fd, 4))
 
-local fds = { [server_fd] = { events = { IN = true } } }
+local client_fds = {}
 
+local fds = { [server_fd] = { events = { IN = true } } }
 local tick = 0
 while true do
-	local do_connection_pending = posix.poll.poll(fds, config.tick_period * 1000) > 0
-	if do_connection_pending then
-		local client_fd = socket.accept(server_fd)
-		if client_fd then
-			client_fds[#client_fds + 1] = client_fd
-		end
+	local is_connection_pending = posix.poll.poll(fds, config.tick_period * 1000) > 0
+	if is_connection_pending then
+		client_fds[#client_fds + 1] = socket.accept(server_fd)
 	end
-	-- TODO! close invalid sockets
 
 	for _, score_source in pairs(score_sources) do
 		if score_source.period ~= 0 and tick % score_source.period == 0 then
@@ -186,8 +185,11 @@ while true do
 		end
 	end
 
-	for _, client_fd in pairs(client_fds) do
-		socket.send(client_fd, "return " .. serialize(present.ation) .. "\n")
+	for i, client_fd in pairs(client_fds) do
+		local ok = socket.send(client_fd, "return " .. serialize(present.ation) .. "\n")
+		if not ok then
+			client_fds[i] = nil
+		end
 	end
 
 	tick = tick + 1
