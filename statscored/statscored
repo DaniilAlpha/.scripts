@@ -10,12 +10,12 @@ local present = require("present")
 ---@param t table?
 ---@param ... any
 function table.get_in(t, ...)
-	for _, key in pairs({ ... }) do
-		if t ~= nil then
-			t = t[key]
-		else
-			break
+	local keys = table.pack(...)
+	for i = 1, keys.n do
+		if t == nil then
+			return
 		end
+		t = t[keys[i]]
 	end
 	return t
 end
