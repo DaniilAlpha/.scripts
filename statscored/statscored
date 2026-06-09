@@ -24,15 +24,13 @@ end
 --- constants ---
 -----------------
 
-local CONFIG_PATH = os.getenv("STATSCORED_CONFIG")
-local TMP_DIR_PATH = os.getenv("XDG_RUNTIME_DIR") or "/tmp"
-local HOME_DIR_PATH = os.getenv("HOME") or "~"
-
-local CONFIG_PATHS = {
-	CONFIG_PATH or (HOME_DIR_PATH .. "/.config/statscored.lua"),
+HOME_DIR_PATH = os.getenv("HOME") or "~"
+TMP_DIR_PATH = os.getenv("XDG_RUNTIME_DIR") or "/tmp"
+CONFIG_PATHS = {
+	os.getenv("STATSCORED_CONFIG") or (HOME_DIR_PATH .. "/.config/statscored.lua"),
 	"/etc/statscored.lua",
 }
-local SOCKET_PATH = TMP_DIR_PATH .. "/statscore.sock"
+SOCKET_PATH = TMP_DIR_PATH .. "/statscore.sock"
 
 ---------------------
 --- serialization ---
@@ -107,29 +105,29 @@ end
 ---@param paths string[]
 ---@return Config?, string?
 local function load_config(paths)
-	---@type function?
-	local get
+	---@type function?, string?
+	local get, err
 	for _, path in pairs(paths) do
-		if path then
-			local env = {}
+		local env = {}
 
-			get = loadfile(path, "t", env)
-			if setfenv then
-				get = get and setfenv(get, env)
-			end
+		if setfenv then
+			get, err = loadfile(path)
+			get = get and setfenv(get, env)
+		else
+			get, err = loadfile(path, nil, env)
+		end
 
-			if get then
-				break
-			end
+		if get then
+			break
 		end
 	end
+	if not get then
+		return nil, err
+	end
 
-	---@type table?
-	local res
-	if get then
-		local ok
-		ok, res = pcall(get)
-		res = ok and res or nil
+	local ok, res = pcall(get)
+	if not ok then
+		return nil, res
 	end
 
 	return {
