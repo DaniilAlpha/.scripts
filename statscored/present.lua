@@ -12,6 +12,7 @@ local present = {}
 ---@field swap Stats<integer>?
 ---@field fs {["/"]: Stats<integer>?}
 ---@field bat BatStats?
+---@field is_charging boolean?
 ---@field bats {[string]: BatStats}
 ---@field temps {[string]: Stats<number>}
 ---@field netfaces {[string]: Stats<number>}
@@ -23,6 +24,7 @@ present.ation = {
 	swap = nil,
 	fs = { ["/"] = nil },
 	bat = nil,
+	is_charging = nil,
 	bats = {},
 	netfaces = {},
 	temps = {},
@@ -41,7 +43,7 @@ function present.fs()
 end
 
 function present.bats()
-	present.ation.bat, present.ation.bats = process.bats()
+	present.ation.bat, present.ation.is_charging, present.ation.bats = process.bats()
 end
 
 function present.netfaces()

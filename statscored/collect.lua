@@ -79,25 +79,39 @@ function collect.rootfs()
 	end
 end
 
+---@alias ChargerInfo boolean
 ---@alias BatInfo integer
----@return {[string]: BatInfo}
-function collect.bats()
+---@return {[string]: BatInfo}, {[string]: ChargerInfo}
+function collect.pses()
 	---@param name string
-	---@return BatInfo?
-	local function bat(name)
-		return read("/sys/class/power_supply/" .. name .. "/capacity", { "*n" })
-	end
+	---@return {type: "Battery"|"UPS"|"Mains"|"USB"|"Wireless", capacity: integer?, online: boolean?}?
+	local function ps(name)
+		---@type string?, integer?, integer?
+		local type, capacity, online =
+			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
+			read("/sys/class/power_supply/" .. name .. "/capacity", { "*n" }),
+			read("/sys/class/power_supply/" .. name .. "/online", { "*n" })
 
-	---@type {[string]: BatInfo}
-	local bats = {}
-	for name in lfs.dir("/sys/class/power_supply/") do
-		---@cast name string
-		if name:lower():find("bat") then
-			bats[name] = bat(name)
+		if type then
+			return { type = type, capacity = capacity, online = online and online ~= 0 }
 		end
 	end
 
-	return bats
+	---@type {[string]: BatInfo}, {[string]: ChargerInfo}
+	local bats, chargers = {}, {}
+	for name in lfs.dir("/sys/class/power_supply/") do
+		---@cast name string
+		local info = ps(name)
+		if info then
+			if info.type == "Battery" then
+				bats[name] = info.capacity
+			else
+				chargers[name] = info.online
+			end
+		end
+	end
+
+	return bats, chargers
 end
 
 ---@alias NetfaceDirInfo {data_amount: integer, error_count: integer, dropped_count: integer}
@@ -178,10 +192,7 @@ function collect.thermal_zones()
 			end
 		end
 
-		return type, {
-			temp_mc = temp_mc,
-			trip_points_mc = trip_points_mc,
-		}
+		return type, { temp_mc = temp_mc, trip_points_mc = trip_points_mc }
 	end
 
 	---@type {[string]: ThermalZoneInfo}
@@ -208,9 +219,9 @@ function collect.thermal_zones()
 	return temps
 end
 
----@alias BatTempInfo {temp_mc: integer, temp_max_mc: integer?}
----@return {[string]: BatTempInfo}
-function collect.bats_temps()
+---@alias PSTempInfo {type: "Battery"|"UPS"|"Mains"|"USB"|"Wireless", temp_mc: integer, temp_max_mc: integer?}
+---@return {[string]: PSTempInfo}
+function collect.ps_temps()
 	---@param anyu integer?
 	---@return integer?
 	local function temp_anyu_to_mc(anyu)
@@ -227,25 +238,24 @@ function collect.bats_temps()
 	end
 
 	---@param name string
-	---@return BatTempInfo?
-	local function bat_temp(name)
+	---@return PSTempInfo?
+	local function ps_temp(name)
 		---@type integer?, integer?
-		local temp_mc, max_temp_mc =
+		local type, temp_mc, max_temp_mc =
+			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
 			temp_anyu_to_mc(read("/sys/class/power_supply/" .. name .. "/temp", { "*n" })),
 			temp_anyu_to_mc(read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" }))
-		if temp_mc then
-			return { temp_mc = temp_mc, temp_max_mc = max_temp_mc }
+
+		if type and temp_mc then
+			return { type = type, temp_mc = temp_mc, temp_max_mc = max_temp_mc }
 		end
 	end
 
-	---@type {[string]: BatTempInfo}
+	---@type {[string]: PSTempInfo}
 	local temps = {}
-	for bat_name in lfs.dir("/sys/class/power_supply/") do
-		---@cast bat_name string
-		if bat_name:lower():find("bat") then
-			local info = bat_temp(bat_name)
-			temps[bat_name] = info
-		end
+	for name in lfs.dir("/sys/class/power_supply/") do
+		---@cast name string
+		temps[name] = ps_temp(name)
 	end
 
 	return temps

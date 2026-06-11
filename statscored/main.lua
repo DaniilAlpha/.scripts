@@ -1,4 +1,4 @@
-#!/usr/bin/lua
+package.path = arg[0]:gsub("[^/]+$", "?.lua") .. ";" .. package.path
 
 table.unpack = table.unpack or unpack
 local posix = require("posix")
@@ -32,13 +32,30 @@ CONFIG_PATHS = {
 }
 SOCKET_PATH = TMP_DIR_PATH .. "/statscore.sock"
 
+---@type Config
+DEFAULT_CONFIG = {
+	tick_period = 4,
+	tick_multipliers = {
+		cpu_load = 2,
+		mem = 2,
+		fs = 64,
+		bats = 2,
+		temps = 4,
+		netfaces = 1,
+	},
+}
+
 ---------------------
 --- serialization ---
 ---------------------
 
 ---@param n number|boolean
 local function serialize_number_or_boolean(n)
-	return n ~= n and "(0/0)" or -math.huge >= n and "(1/0)" or n >= math.huge and "(-1/0)" or tostring(n)
+	if type(n) == "boolean" then
+		return tostring(n)
+	else
+		return n ~= n and "(0/0)" or -math.huge >= n and "(1/0)" or n >= math.huge and "(-1/0)" or tostring(n)
+	end
 end
 
 ---@param s string
@@ -105,19 +122,6 @@ end
 ---@param paths string[]
 ---@return Config?, string?
 local function load_config(paths)
-	---@type Config
-	local DEFAULT_CONFIG = {
-		tick_period = 4,
-		tick_multipliers = {
-			cpu_load = 2,
-			mem = 2,
-			fs = 64,
-			bats = 16,
-			temps = 4,
-			netfaces = 1,
-		},
-	}
-
 	---@type function?, string?
 	local get, err
 	for _, path in pairs(paths) do
@@ -135,7 +139,7 @@ local function load_config(paths)
 		end
 	end
 	if not get then
-		return  DEFAULT_CONFIG, err
+		return DEFAULT_CONFIG, err
 	end
 
 	local ok, res = pcall(get)
@@ -148,7 +152,7 @@ local function load_config(paths)
 		tick_multipliers = {
 			cpu_load = table.get_in(res, "tick_multipliers", "cpu_load") or DEFAULT_CONFIG.tick_multipliers.cpu_load,
 			mem = table.get_in(res, "tick_multipliers", "mem") or DEFAULT_CONFIG.tick_multipliers.mem,
-			fs = table.get_in(res, "tick_multipliers", "fs") or DEFAULT_CONFIG.tick_multipliers.fd,
+			fs = table.get_in(res, "tick_multipliers", "fs") or DEFAULT_CONFIG.tick_multipliers.fs,
 			bats = table.get_in(res, "tick_multipliers", "bats") or DEFAULT_CONFIG.tick_multipliers.bats,
 			temps = table.get_in(res, "tick_multipliers", "temps") or DEFAULT_CONFIG.tick_multipliers.temps,
 			netfaces = table.get_in(res, "tick_multipliers", "netfaces") or DEFAULT_CONFIG.tick_multipliers.netfaces,

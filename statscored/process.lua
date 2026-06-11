@@ -2,8 +2,8 @@ local posix = require("posix")
 local collect = require("collect")
 
 ---@class Stats<T>
----@field value T - A core value for the stats.
----@field risk number - A number greater than `0`, where `0` indicates a full health, and `1+` is bad or dangerous.
+---@field value T the core of the stats
+---@field risk number greater than `0`, where `0` indicates a full health, and `1+` is bad/dangerous
 
 local function realtime()
 	local sec, nsec = posix.clock_gettime(posix.CLOCK_REALTIME)
@@ -36,7 +36,7 @@ function process.rootfs()
 end
 
 process.bats = (function()
-	local CHANGE_COUNT_STABLE, CHANGE_COUNT_MAX = 4, 20
+	local CHANGE_COUNT_STABLE, CHANGE_COUNT_MAX = 4, math.ceil(300 / 8) -- TODO replace with expiretime, so it is independent of update period
 	local CRITICAL_TIME = 10 * 60
 	local CHARGE_RISK, TIME_RISK = 1.0, 0.0
 
@@ -45,9 +45,11 @@ process.bats = (function()
 	local last_time, bat_histories = 0, {}
 
 	---@alias BatStats Stats<{charge: integer, rate: number}>
-	---@return BatStats, {[string]: BatStats}
+	---@return BatStats combo stats as if it was only a single battery (combined of all real ones)
+	---@return boolean is_charging results in `true` if any of the external power supplies (e.g. chargers) are connected
+	---@return {[string]: BatStats} individual all real batteries statuses
 	return function()
-		local time, bats = realtime(), collect.bats()
+		local time, bats, chargers = realtime(), collect.pses()
 
 		---@param charge integer
 		---@param rate number
@@ -94,9 +96,13 @@ process.bats = (function()
 			total_rate / individual_stats_count
 		)
 
-		last_time = time
+		local is_charging = false
+		for _, charger in pairs(chargers) do
+			is_charging = is_charging or charger
+		end
 
-		return combo_stats, individual_stats
+		last_time = time
+		return combo_stats, is_charging, individual_stats
 	end
 end)()
 
@@ -148,7 +154,7 @@ function process.temps()
 	local BEST_TEMP, SANE_TEMP = 20, 30
 
 	local thermal_zones = collect.thermal_zones()
-	local bats_temps = collect.bats_temps()
+	local ps_temps = collect.ps_temps()
 
 	---@type {[string]: Stats<number>}
 	local individual_stats = {}
@@ -166,10 +172,10 @@ function process.temps()
 			risk = math.abs(temp - BEST_TEMP) / (max_temp - BEST_TEMP),
 		}
 	end
-	for name, bat_temp in pairs(bats_temps) do
-		local temp = bat_temp.temp_mc / 1000
-		local max_temp = bat_temp.temp_max_mc and (bat_temp.temp_max_mc / 1000) or BAT_MAX_TEMP
-		-- max_temp = max_temp >= SANE_TEMP and max_temp or BAT_MAX_TEMP
+	for name, ps_temp in pairs(ps_temps) do
+		local temp = ps_temp.temp_mc / 1000
+		local max_temp = ps_temp.temp_max_mc and (ps_temp.temp_max_mc / 1000) or BAT_MAX_TEMP
+		max_temp = max_temp >= SANE_TEMP and max_temp or BAT_MAX_TEMP
 
 		individual_stats[name] = {
 			value = temp,
