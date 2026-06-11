@@ -105,6 +105,19 @@ end
 ---@param paths string[]
 ---@return Config?, string?
 local function load_config(paths)
+	---@type Config
+	local DEFAULT_CONFIG = {
+		tick_period = 4,
+		tick_multipliers = {
+			cpu_load = 2,
+			mem = 2,
+			fs = 64,
+			bats = 16,
+			temps = 4,
+			netfaces = 1,
+		},
+	}
+
 	---@type function?, string?
 	local get, err
 	for _, path in pairs(paths) do
@@ -122,7 +135,7 @@ local function load_config(paths)
 		end
 	end
 	if not get then
-		return nil, err
+		return  DEFAULT_CONFIG, err
 	end
 
 	local ok, res = pcall(get)
@@ -131,14 +144,14 @@ local function load_config(paths)
 	end
 
 	return {
-		tick_period = table.get_in(res, "tick_period") or 4,
+		tick_period = table.get_in(res, "tick_period") or DEFAULT_CONFIG.tick_period,
 		tick_multipliers = {
-			cpu_load = table.get_in(res, "tick_multipliers", "cpu_load") or 2,
-			mem = table.get_in(res, "tick_multipliers", "mem") or 2,
-			fs = table.get_in(res, "tick_multipliers", "fs") or 64,
-			bats = table.get_in(res, "tick_multipliers", "bats") or 16,
-			temps = table.get_in(res, "tick_multipliers", "temps") or 4,
-			netfaces = table.get_in(res, "tick_multipliers", "netfaces") or 1,
+			cpu_load = table.get_in(res, "tick_multipliers", "cpu_load") or DEFAULT_CONFIG.tick_multipliers.cpu_load,
+			mem = table.get_in(res, "tick_multipliers", "mem") or DEFAULT_CONFIG.tick_multipliers.mem,
+			fs = table.get_in(res, "tick_multipliers", "fs") or DEFAULT_CONFIG.tick_multipliers.fd,
+			bats = table.get_in(res, "tick_multipliers", "bats") or DEFAULT_CONFIG.tick_multipliers.bats,
+			temps = table.get_in(res, "tick_multipliers", "temps") or DEFAULT_CONFIG.tick_multipliers.temps,
+			netfaces = table.get_in(res, "tick_multipliers", "netfaces") or DEFAULT_CONFIG.tick_multipliers.netfaces,
 		},
 	}
 end
