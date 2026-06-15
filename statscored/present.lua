@@ -16,7 +16,7 @@ local present = {}
 ---@field bats {[string]: BatStats}
 ---@field netfaces {[string]: Stats<number>}
 ---@field temps {[string]: Stats<number>}
----@field coolers {[string]: Stats<number>}
+---@field coolers {[string]: Stats<integer>}
 
 ---@type Presentation
 present.ation = {
