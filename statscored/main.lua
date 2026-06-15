@@ -40,8 +40,9 @@ DEFAULT_CONFIG = {
 		mem = 2,
 		fs = 64,
 		bats = 2,
-		temps = 4,
 		netfaces = 1,
+		temps = 4,
+		coolers = 4,
 	},
 }
 
@@ -112,8 +113,9 @@ end
 ---@field mem integer
 ---@field fs integer
 ---@field bats integer
----@field temps integer
 ---@field netfaces integer
+---@field temps integer
+---@field coolers integer
 
 ---@class Config
 ---@field tick_period number
@@ -154,8 +156,9 @@ local function load_config(paths)
 			mem = table.get_in(res, "tick_multipliers", "mem") or DEFAULT_CONFIG.tick_multipliers.mem,
 			fs = table.get_in(res, "tick_multipliers", "fs") or DEFAULT_CONFIG.tick_multipliers.fs,
 			bats = table.get_in(res, "tick_multipliers", "bats") or DEFAULT_CONFIG.tick_multipliers.bats,
-			temps = table.get_in(res, "tick_multipliers", "temps") or DEFAULT_CONFIG.tick_multipliers.temps,
 			netfaces = table.get_in(res, "tick_multipliers", "netfaces") or DEFAULT_CONFIG.tick_multipliers.netfaces,
+			temps = table.get_in(res, "tick_multipliers", "temps") or DEFAULT_CONFIG.tick_multipliers.temps,
+			coolers = table.get_in(res, "tick_multipliers", "coolers") or DEFAULT_CONFIG.tick_multipliers.coolers,
 		},
 	}
 end
@@ -172,8 +175,9 @@ local score_sources = {
 	{ fn = present.mem, period = config.tick_multipliers.mem },
 	{ fn = present.fs, period = config.tick_multipliers.fs },
 	{ fn = present.bats, period = config.tick_multipliers.bats },
-	{ fn = present.temps, period = config.tick_multipliers.temps },
 	{ fn = present.netfaces, period = config.tick_multipliers.netfaces },
+	{ fn = present.temps, period = config.tick_multipliers.temps },
+	{ fn = present.coolers, period = config.tick_multipliers.coolers },
 }
 
 -- to make writing to broken pipe just report an error instead of crashing

@@ -14,8 +14,9 @@ local present = {}
 ---@field bat BatStats?
 ---@field is_charging boolean?
 ---@field bats {[string]: BatStats}
----@field temps {[string]: Stats<number>}
 ---@field netfaces {[string]: Stats<number>}
+---@field temps {[string]: Stats<number>}
+---@field coolers {[string]: Stats<number>}
 
 ---@type Presentation
 present.ation = {
@@ -28,6 +29,7 @@ present.ation = {
 	bats = {},
 	netfaces = {},
 	temps = {},
+	coolers = {},
 }
 
 function present.cpu_load()
@@ -52,6 +54,9 @@ end
 
 function present.temps()
 	present.ation.temps = process.temps()
+end
+function present.coolers()
+	present.ation.coolers = process.coolers()
 end
 
 ------

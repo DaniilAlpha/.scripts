@@ -91,7 +91,6 @@ function collect.pses()
 			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
 			read("/sys/class/power_supply/" .. name .. "/capacity", { "*n" }),
 			read("/sys/class/power_supply/" .. name .. "/online", { "*n" })
-
 		if type then
 			return { type = type, capacity = capacity, online = online and online ~= 0 }
 		end
@@ -196,27 +195,27 @@ function collect.thermal_zones()
 	end
 
 	---@type {[string]: ThermalZoneInfo}
-	local temps = {}
+	local thermal_zones = {}
 	for zone_filename in lfs.dir("/sys/class/thermal/") do
 		---@cast zone_filename string
 		local i = tonumber(zone_filename:match("thermal_zone(%d+)"))
 		if i then
 			local name, info = thermal_zone(i)
 			if name then
-				if temps[name] then
+				if thermal_zones[name] then
 					local j = 1
-					while temps[name .. j] do
+					while thermal_zones[name .. j] do
 						j = j + 1
 					end
 					name = name .. j
 				end
 
-				temps[name] = info
+				thermal_zones[name] = info
 			end
 		end
 	end
 
-	return temps
+	return thermal_zones
 end
 
 ---@alias PSTempInfo {type: "Battery"|"UPS"|"Mains"|"USB"|"Wireless", temp_mc: integer, temp_max_mc: integer?}
@@ -245,7 +244,6 @@ function collect.ps_temps()
 			read("/sys/class/power_supply/" .. name .. "/type", { "*l" }),
 			temp_anyu_to_mc(read("/sys/class/power_supply/" .. name .. "/temp", { "*n" })),
 			temp_anyu_to_mc(read("/sys/class/power_supply/" .. name .. "/temp_max", { "*n" }))
-
 		if type and temp_mc then
 			return { type = type, temp_mc = temp_mc, temp_max_mc = max_temp_mc }
 		end
@@ -261,7 +259,45 @@ function collect.ps_temps()
 	return temps
 end
 
--- TODO probably show cooling devices
+---@alias CoolingDeviceInfo {cur_state: integer, max_state: integer}
+---@return {[string]: CoolingDeviceInfo}
+function collect.cooling_devices()
+	---@param i integer
+	---@return string?, CoolingDeviceInfo?
+	local function cooling_device(i)
+		---@type string?, integer?
+		local type, cur_state, max_state =
+			read("/sys/class/thermal/cooling_device" .. i .. "/type", { "*l" }),
+			read("/sys/class/thermal/cooling_device" .. i .. "/cur_state", { "*n" }),
+			read("/sys/class/thermal/cooling_device" .. i .. "/max_state", { "*n" })
+		if type and cur_state and max_state then
+			return type, { cur_state = cur_state, max_state = max_state }
+		end
+	end
+
+	---@type {[string]: CoolingDeviceInfo}
+	local cooling_devices = {}
+	for cooling_device_filename in lfs.dir("/sys/class/thermal/") do
+		---@cast cooling_device_filename string
+		local i = tonumber(cooling_device_filename:match("cooling_device(%d+)"))
+		if i then
+			local name, info = cooling_device(i)
+			if name then
+				if cooling_devices[name] then
+					local j = 1
+					while cooling_devices[name .. j] do
+						j = j + 1
+					end
+					name = name .. j
+				end
+
+				cooling_devices[name] = info
+			end
+		end
+	end
+
+	return cooling_devices
+end
 
 ------
 

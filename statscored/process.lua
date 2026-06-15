@@ -186,6 +186,22 @@ function process.temps()
 	return individual_stats
 end
 
+---@return {[string]: Stats<number>}
+function process.coolers()
+	local cooling_devices = collect.cooling_devices()
+
+	---@type {[string]: Stats<number>}
+	local individual_stats = {}
+	for name, cooling_device in pairs(cooling_devices) do
+		individual_stats[name] = {
+			value = cooling_device.cur_state / cooling_device.max_state,
+			risk = cooling_device.cur_state / cooling_device.max_state,
+		}
+	end
+
+	return individual_stats
+end
+
 ------
 
 return process
